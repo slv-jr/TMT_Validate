@@ -1,0 +1,21 @@
+# StormWings — dépendances Python
+#
+# Installation : pip install -r requirements.txt
+#                ou via scripts/install.sh
+
+# MAVLink — communication avec le Cube Orange+
+pymavlink>=2.4.40
+
+# LoRa Meshtastic — communication inter-drones et avec la station Calypso
+meshtastic>=2.3.0
+pypubsub>=4.0.3
+
+# Sérialisation / utilitaires
+pyserial>=3.5
+
+# Pour les outils de debug et de visualisation (optionnel mais recommandé)
+# matplotlib>=3.5.0
+# numpy>=1.21.0
+
+# Tests
+# (unittest est dans la stdlib, pas de dépendance externe nécessaire)

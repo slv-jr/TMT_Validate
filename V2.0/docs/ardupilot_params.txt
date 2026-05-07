@@ -1,0 +1,121 @@
+# StormWings — Paramètres ArduPilot Cube Orange+ (ArduRover 4.6.3)
+#
+# À charger via Mission Planner : Config → Full Parameter Tree → Load From File
+# OU à appliquer un par un dans Full Parameter List.
+#
+# Validés par le PoC SwarmZ (PoC Full).
+# Important : SERVO1_FUNCTION=1 (RCPassThru) est OBLIGATOIRE pour que les
+# overrides du Pi fonctionnent. La valeur 0 désactive le servo.
+#
+# Format : NOM,VALEUR
+
+# ──────────────────────────────────────────────
+# Plate-forme
+# ──────────────────────────────────────────────
+FRAME_CLASS,2
+# 2 = Boat. Le mode 2 est correct pour un voilier dans ArduRover ≥ 4.5.
+SAIL_ENABLE,1
+# Active la logique sailboat de l'autopilote.
+
+# ──────────────────────────────────────────────
+# Communication MAVLink Cube ↔ Raspberry Pi (TELEM2)
+# ──────────────────────────────────────────────
+SERIAL2_PROTOCOL,2
+# 2 = MAVLink2 sur TELEM2
+SERIAL2_BAUD,57
+# 57600 baud (le 57 est interprété ×1000 par ArduPilot)
+
+# ──────────────────────────────────────────────
+# Servos — IMPORTANT
+# ──────────────────────────────────────────────
+SERVO1_FUNCTION,1
+# 1 = RCPassThru → Le Cube transmet tel quel ce qu'il reçoit (RC ou override Pi)
+# ⚠️ Avec FUNCTION=0 (None), le servo est désactivé. Avec 26 (GroundSteering),
+# ArduPilot recalcule en permanence et écrase l'override Pi.
+SERVO1_MIN,1100
+SERVO1_MAX,1900
+SERVO1_TRIM,1500
+# Plage µs du gouvernail (centre 1500, ±400µs).
+
+SERVO2_FUNCTION,89
+# 89 = MainSail (ouverture du winch de voile, géré par ArduRover sail logic).
+# Si on veut piloter la voile en pure passthrough comme le safran, mettre 1.
+SERVO2_MIN,1100
+SERVO2_MAX,1900
+SERVO2_TRIM,1500
+
+SERVO5_FUNCTION,89
+# Optionnel : si on a une foc séparée. Sinon laisser à 0.
+
+# ──────────────────────────────────────────────
+# Canal CH4 pour le moteur boost (uniquement U1B1)
+# ──────────────────────────────────────────────
+SERVO4_FUNCTION,1
+# RCPassThru pour pouvoir overrider la commande boost depuis le Pi.
+
+# ──────────────────────────────────────────────
+# RC IN
+# ──────────────────────────────────────────────
+RC_PROTOCOLS,1
+# 1 = PPM uniquement (encodeur BCUBE → RCIN)
+MODE_CH,3
+# Le levier CH3 contrôle le mode. Avec MODE_CH=3, CH3 sélectionne MODE1..MODE6.
+MODE1,0
+MODE2,0
+MODE3,0
+MODE4,0
+MODE5,0
+MODE6,0
+# Tous les modes = MANUAL (0). Le Pi prend la main via RC_CHANNELS_OVERRIDE
+# uniquement quand CH3 < 1300 µs (lu directement par le Pi via MAVLink).
+
+# ──────────────────────────────────────────────
+# Failsafes — désactivés pour le PoC, à réactiver pour la course finale
+# ──────────────────────────────────────────────
+FS_THR_ENABLE,0
+# Désactive le failsafe radio (pour le PoC). Pour la course, on peut
+# basculer à 1 + FS_THR_VALUE=975 pour forcer un mode de secours en cas
+# de perte RC.
+FS_GCS_ENABLE,0
+# Désactive le failsafe GCS — sinon le Cube bascule en HOLD si le Pi
+# arrête d'envoyer des heartbeats GCS (1Hz).
+BRD_SAFETY_DEFLT,0
+# Safety switch désactivé par défaut au boot.
+
+# ──────────────────────────────────────────────
+# GPS Here4 (CAN1)
+# ──────────────────────────────────────────────
+GPS_TYPE,9
+# 9 = DroneCAN (UAVCAN). Le Here4 expose le GPS sur CAN1.
+CAN_P1_DRIVER,1
+CAN_P1_BITRATE,1000000
+CAN_D1_PROTOCOL,1
+CAN_D1_UC_ESC_BM,0
+CAN_D1_UC_NODE,10
+
+# ──────────────────────────────────────────────
+# Compass / IMU
+# ──────────────────────────────────────────────
+COMPASS_ENABLE,1
+COMPASS_USE,1
+COMPASS_PRIO1_ID,0
+# Configurer ces priorités après calibration MissionPlanner.
+
+# ──────────────────────────────────────────────
+# Logging
+# ──────────────────────────────────────────────
+LOG_BACKEND_TYPE,1
+# 1 = File (microSD) — ArduPilot écrit ses logs sur la SD du Cube
+LOG_FILE_DSRMROT,1
+# Force la rotation à chaque "disarm"
+
+# ──────────────────────────────────────────────
+# NOTES IMPORTANTES
+# ──────────────────────────────────────────────
+# 1. Après chargement, FAIRE LA CALIBRATION ACCEL+COMPASS dans Mission Planner.
+# 2. Faire la calibration RADIO (CH1, CH2, CH3 doivent varier de ~1100 à 1900).
+# 3. Vérifier que CH3 bouge bien au levier (sans calibration radio, l'override
+#    Pi peut ne pas fonctionner correctement).
+# 4. Tester le passthrough : avec CH3 en haut (>1500µs), bouger les sticks et
+#    vérifier que les servos suivent.
+# 5. Lancer test_servos.py avec CH3 en bas pour vérifier l'override Pi.

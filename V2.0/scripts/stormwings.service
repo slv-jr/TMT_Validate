@@ -1,0 +1,32 @@
+[Unit]
+Description=StormWings - SWARMz BattleBoats autonomous sailing
+Documentation=file:///__INSTALL_DIR__/README.md
+After=network.target
+StartLimitIntervalSec=300
+StartLimitBurst=5
+
+[Service]
+Type=simple
+User=__USER__
+Group=dialout
+WorkingDirectory=__INSTALL_DIR__
+
+# DRONE_ID est lu depuis /etc/stormwings/drone_id.env
+# Créer ce fichier sur chaque drone avec son ID :
+#   echo 'DRONE_ID=U1B1' | sudo tee /etc/stormwings/drone_id.env
+EnvironmentFile=/etc/stormwings/drone_id.env
+
+ExecStart=/usr/bin/python3 -u __INSTALL_DIR__/main.py
+Restart=on-failure
+RestartSec=5
+StandardOutput=journal
+StandardError=journal
+SyslogIdentifier=stormwings
+
+# Sécurités
+KillSignal=SIGTERM
+TimeoutStopSec=5
+NoNewPrivileges=true
+
+[Install]
+WantedBy=multi-user.target
