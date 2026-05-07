@@ -70,10 +70,20 @@ echo "  ✓ Utilisateur $USERNAME ajouté au groupe dialout"
 echo
 echo "[3/6] Mise à jour APT et dépendances système…"
 apt-get update
+
+# BLAS lib pour NumPy. Trixie (Pi OS 2024+) n'a plus libatlas-base-dev → libopenblas-dev.
+# Sur Bookworm/Bullseye, libatlas-base-dev existe encore. On essaie OpenBLAS d'abord.
+if apt-cache show libopenblas-dev >/dev/null 2>&1; then
+    BLAS_PKG=libopenblas-dev
+else
+    BLAS_PKG=libatlas-base-dev
+fi
+echo "  → BLAS : $BLAS_PKG"
+
 apt-get install -y --no-install-recommends \
     python3 python3-pip python3-venv \
     git build-essential \
-    libatlas-base-dev \
+    "$BLAS_PKG" \
     python3-numpy python3-matplotlib
 
 # ─── 4. Dépendances Python ───
