@@ -26,7 +26,6 @@
 ```
 [ ] Récupérer GPS officiels des 9 bouées (A B C D E F G Z1 Z2)
 [ ] Confirmer sens du parcours (tribord ou bâbord amure au départ ?)
-[ ] Confirmer BOOST_MAX_S officiel (modifier config.py si ≠ 30s)
 [ ] Récupérer fréquence vent (vérifier que la station Calypso émet)
 [ ] Numéros d'urgence des juges
 ```
@@ -45,21 +44,20 @@
 [ ] Test fix RTK                        ─ python3 -m tests.test_rtk
         ─► fix_type ≥ 5 stable 10s     ─►
 [ ] Test connexion MAVLink+LoRa+RC      ─ python3 -m tests.test_connexion
-[ ] Test servos (CH3 BAS)               ─ python3 -m tests.test_servos
+[ ] Test servos (levier mode BAS)       ─ python3 -m tests.test_servos
         ─► safran + voile bougent OK   ─►
-[ ] Test bascule manuel/auto (CH3)      ─ python3 -m tests.test_bascule
+[ ] Test bascule manuel/auto (levier)   ─ python3 -m tests.test_bascule
 [ ] Service stormwings démarré          ─ sudo systemctl start stormwings
 [ ] Logs OK (1 ligne / 100ms)           ─ tail -f logs/flight_*.csv
 ```
 
-### Vérifications RC
+### Vérifications RC (canaux MAVLink avec setup NouvelEncodeur)
 
 ```
-[ ] CH3 HAUT (>1700µs) au démarrage     ─ pilote a la main
-[ ] Stick safran : centre franc
-[ ] Stick voile : position basse (voile fermée)
-[ ] Levier mode : 3 positions distinctes
-[ ] (U1B1) Levier boost : position basse
+[ ] Levier mode HAUT (chan6 > 1700µs)   ─ pilote a la main
+[ ] Stick safran (chan4) : centre franc
+[ ] Stick voile (chan5) : position basse (voile fermée)
+[ ] Levier mode (chan6) : 3 positions distinctes ~950 / ~1500 / ~2050 µs
 ```
 
 ---
@@ -83,11 +81,11 @@
 
 ```
 T-3 min  [ ] Tous les drones positionnés zone départ
-         [ ] CH3 HAUT — pilotage manuel pour positionnement final
+         [ ] Levier mode HAUT — pilotage manuel pour positionnement final
          [ ] Demander confirmation visuelle des juges
 
-T-1 min  [ ] CH3 BAS sur U1B1, puis U1B2, puis U1B3 (séquentiel)
-         [ ] Vérifier dans logs : "[MODE] MANUAL → AUTO"
+T-1 min  [ ] Levier mode BAS sur U1B1, puis U1B2, puis U1B3 (séquentiel)
+         [ ] Vérifier dans logs : "[MODE] MANUAL → AUTO (chan6=...)"
          [ ] Vérifier dans logs : "[NAV] ATTENTE → REMONTEE_VENT"
 
 T-0      [ ] Top départ donné par les juges
@@ -117,7 +115,6 @@ T-0      [ ] Top départ donné par les juges
 | `[STALL] détecté niveau LIGHT`          | Drone décroche, il va corriger seul     |
 | `[STALL] détecté niveau HARD`           | Reprendre la main si dérive             |
 | `[PENALTY] received from juge`          | 5 sec pour décider AUTO/MANUEL          |
-| `[BOOST] activé pour Xs (reste Ys)`     | Boost engagé, normal                     |
 | `[NAV] ARRIVÉE`                         | Drone a fini son parcours !              |
 
 ---
@@ -127,7 +124,7 @@ T-0      [ ] Top départ donné par les juges
 ### Le drone fait n'importe quoi
 
 ```
-1. CH3 HAUT immédiatement (reprise manuelle)
+1. Levier mode HAUT immédiatement (reprise manuelle)
 2. Stick safran centré + stick voile choquée → drone s'arrête
 3. Récupérer à la rame ou attendre dérive vers la berge
 ```
@@ -136,9 +133,9 @@ T-0      [ ] Top départ donné par les juges
 
 ```
 ─► Pi détecte "[PENALTY] reçue"
-─► 5 sec de fenêtre pour CH3 HAUT (manuel)
-   • Si CH3 HAUT dans les 5s   ─► tu fais le tour à la radio (max 30s)
-   • Si CH3 reste BAS          ─► drone fait Z1→Z2→Z1 tout seul
+─► 5 sec de fenêtre pour basculer le levier en HAUT (manuel)
+   • Si levier HAUT dans les 5s ─► tu fais le tour à la radio (max 30s)
+   • Si levier reste BAS        ─► drone fait Z1→Z2→Z1 tout seul
 ```
 
 ### Perte LoRa (drone solo)
@@ -154,7 +151,7 @@ T-0      [ ] Top départ donné par les juges
 ```
 ─► [DEGRADED] MAVLINK_LOST
 ─► Le Cube garde le dernier override 3s puis revient en RC pur
-─► CH3 HAUT immédiatement, repasser en pilotage radio
+─► Levier mode HAUT immédiatement, repasser en pilotage radio
 ─► Si possible : SSH sur Pi et "sudo systemctl restart stormwings"
 ```
 
@@ -162,7 +159,7 @@ T-0      [ ] Top départ donné par les juges
 
 ```
 ─► [DEGRADED] LOW_BATTERY (<11.0V)
-─► Drone réduit la vitesse + désactive boost
+─► Drone log warning + reprise RC suggérée à l'opérateur
 ─► Si tension critique (<10.5V) : reprendre la main et rallier la berge
 ```
 
@@ -177,7 +174,6 @@ T-0      [ ] Top départ donné par les juges
         ─► python3 -m tools.replay_log logs_U1B_/flight_*.csv
 [ ] Notes : ce qui a marché / pas marché
 [ ] Si 2ème manche : sudo systemctl restart stormwings sur les 3 Pi
-        (remet le compteur boost à zéro)
 ```
 
 ---
@@ -201,8 +197,6 @@ Coéquipier 3      ____________________
 |-----------------------------------|-----------------------|
 | Capture WAYPOINT (RTK)            | **4 m**               |
 | Capture WAYPOINT (GPS dégradé)    | **7 m**               |
-| Boost total                       | **30 s** (par défaut) |
-| Boost actions max                 | **3**                 |
 | Pénalité — fenêtre pilote         | **5 s**               |
 | Pénalité — limite manuel          | **30 s**              |
 | Stall — durée détection           | **10 s**              |

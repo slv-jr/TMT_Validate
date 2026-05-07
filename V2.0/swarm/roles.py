@@ -11,7 +11,6 @@ Critères :
     - Position dans le parcours (le drone le plus avancé devient Scout)
     - Batterie restante (Safety prend le drone à plus faible énergie)
     - Vitesse instantanée (le plus rapide tend à devenir Scout)
-    - Drone avec boost moteur → privilégie Scout en mode dégradé vent faible
 """
 
 import logging
@@ -33,7 +32,6 @@ class DroneState:
     speed_ms: float = 0.0
     battery_pct: float = 100.0
     has_fix: bool = False
-    has_boost: bool = False
     role: str = config.ROLE_OPTIMIZER
 
 
@@ -46,7 +44,6 @@ class RoleManager:
         # Notre état interne (rempli par la boucle principale)
         self._self_state: DroneState = DroneState(
             boat_id=config.DRONE_ID,
-            has_boost=config.HAS_BOOST_MOTOR,
             role=config.DEFAULT_ROLE,
         )
         # États perçus des coéquipiers (depuis LoRa)
@@ -75,11 +72,8 @@ class RoleManager:
         if ts is None:
             ts = DroneState(
                 boat_id=boat_id,
-                has_boost=False,           # on suppose, sauf si c'est U1B1 (boost par défaut)
                 role=config.DEFAULT_ROLE,
             )
-            if boat_id == "U1B1":
-                ts.has_boost = True
             self._teammate_states[boat_id] = ts
         ts.pos_gps = pos_gps
         ts.speed_ms = speed_ms
@@ -118,8 +112,6 @@ class RoleManager:
             score += drone.leg_index * 100.0          # plus avancé = mieux
             score += drone.speed_ms * 5.0             # plus rapide = mieux
             score += drone.battery_pct * 0.3
-            if drone.has_boost:
-                score += 50.0                         # le boost accélère
         elif role == config.ROLE_OPTIMIZER:
             score += drone.battery_pct * 1.0
             score += min(drone.speed_ms, 3.0) * 10.0  # vitesse stable, pas excessive
@@ -181,17 +173,14 @@ class RoleManager:
             return {
                 "buoy_clearance_factor": 1.0,
                 "tack_eagerness": 1.2,
-                "use_boost_authorized": True,
             }
         elif self.my_role == config.ROLE_SAFETY:
             return {
                 "buoy_clearance_factor": 1.5,    # passer plus large
                 "tack_eagerness": 0.8,           # moins de tacks risqués
-                "use_boost_authorized": False,
             }
         # OPTIMIZER (défaut)
         return {
             "buoy_clearance_factor": 1.0,
             "tack_eagerness": 1.0,
-            "use_boost_authorized": False,
         }

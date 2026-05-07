@@ -20,7 +20,6 @@ from navigation.waypoints import CourseManager
 from comms.protocol import (
     PositionMessage, WindMessage, parse_message, build_position_from_telemetry,
 )
-from boost.boost_controller import BoostController, BoostState
 from safety.stall_detector import StallDetector, StallLevel
 from safety.penalty_manager import PenaltyManager, PenaltyMode
 from safety.degraded_modes import DegradedManager, DegradedMode
@@ -95,13 +94,6 @@ class TestConfig(unittest.TestCase):
         slots = set(config.TDMA_SLOTS.values())
         self.assertEqual(len(slots), 3)
         self.assertEqual(slots, {0, 500, 1000})
-
-    def test_boost_budget_is_total_not_per_action(self):
-        # Le budget doit être en SECONDES TOTALES, indépendant du nb d'actions
-        self.assertGreater(config.BOOST_MAX_S, 0)
-        self.assertGreater(config.BOOST_ACTIONS_MAX, 0)
-        # 30 s total, pas 3 × 30
-        self.assertLessEqual(config.BOOST_MAX_S, 60)
 
 
 # ════════════════════════════════════════════════════════════════════════
@@ -301,54 +293,6 @@ class TestPotentialField(unittest.TestCase):
         rep = potential_field.Repulsor(pos=rep_pos, radius_m=4.0, gain=10.0)
         f = potential_field.repulsive_force(boat, rep)
         self.assertLess(f[0], 0)
-
-
-# ════════════════════════════════════════════════════════════════════════
-# BOOST — budget total au lieu de 3×30
-# ════════════════════════════════════════════════════════════════════════
-class TestBoost(unittest.TestCase):
-
-    def setUp(self):
-        # Forcer HAS_BOOST_MOTOR=True pour que le contrôleur soit IDLE
-        self._save = config.HAS_BOOST_MOTOR
-        config.HAS_BOOST_MOTOR = True
-
-    def tearDown(self):
-        config.HAS_BOOST_MOTOR = self._save
-
-    def test_initial_state(self):
-        bc = BoostController(mav=None)
-        self.assertEqual(bc.state, BoostState.IDLE)
-        self.assertEqual(bc.activations_remaining, config.BOOST_ACTIONS_MAX)
-        self.assertAlmostEqual(bc.seconds_remaining, config.BOOST_MAX_S)
-        self.assertTrue(bc.can_boost())
-
-    def test_request_consumes_one_action(self):
-        bc = BoostController(mav=None)
-        ok = bc.request_boost(boat_speed_ms=0.0, wind_speed_ms=0.5,
-                              battery_pct=80.0, reason="test")
-        self.assertTrue(ok)
-        self.assertEqual(bc.state, BoostState.RUNNING)
-        self.assertEqual(bc.activations_remaining,
-                         config.BOOST_ACTIONS_MAX - 1)
-
-    def test_low_battery_rejects(self):
-        bc = BoostController(mav=None)
-        ok = bc.request_boost(boat_speed_ms=0.0, wind_speed_ms=0.5,
-                              battery_pct=10.0, reason="test")
-        self.assertFalse(ok)
-        self.assertEqual(bc.state, BoostState.IDLE)
-
-    def test_total_budget_exhausts(self):
-        """Si on consomme BOOST_MAX_S, on bascule en EXHAUSTED même avec actions disponibles."""
-        bc = BoostController(mav=None)
-        # On simule la consommation manuellement pour ne pas attendre 30 s
-        bc._seconds_used = config.BOOST_MAX_S + 0.1
-        bc._activations_used = 1
-        # request_boost doit refuser
-        ok = bc.request_boost(boat_speed_ms=0.0, wind_speed_ms=0.5,
-                              battery_pct=80.0, reason="test")
-        self.assertFalse(ok)
 
 
 # ════════════════════════════════════════════════════════════════════════

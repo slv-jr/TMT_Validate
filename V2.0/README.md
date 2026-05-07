@@ -2,7 +2,7 @@
 
 > Système de navigation autonome multi-drones voiliers pour le **Challenge SWARMz BattleBoats** organisé à Toulon les **9-10 mai 2026** par l'équipe UTT (Université de Technologie de Troyes).
 
-3 voiliers RC Joysway Focus V2 (~1 m, IDs `U1B1`, `U1B2`, `U1B3`) en pilotage autonome coopératif sur le **parcours côtier N°3** (bouée C visitée 3×), face aux équipes DaVinci, IPSA, ENSEEIHT. La station-sol diffuse le vent réel par LoRa. Les drones se coordonnent en TDMA. Un opérateur reprend la main via CH3 à tout moment.
+3 voiliers RC Joysway Focus V2 (~1 m, IDs `U1B1`, `U1B2`, `U1B3`) en pilotage autonome coopératif sur le **parcours côtier N°3** (bouée C visitée 3×), face aux équipes DaVinci, IPSA, ENSEEIHT. La station-sol diffuse le vent réel par LoRa. Les drones se coordonnent en TDMA. Un opérateur reprend la main via le levier 3 positions de la J4C05 à tout moment.
 
 ---
 
@@ -28,11 +28,11 @@
 │           │ W|dir|spd|ts        │  canal BATTLEBOATS            │
 │           └──── LoRa 868 MHz ──►│  /dev/ttyUSB0                 │
 │                                 │       ▼                       │
-│  Télécommande RC                │  Raspberry Pi 4B (10 Hz)      │
-│  CH1: gouvernail                │       │ MAVLink /dev/serial0  │
-│  CH2: voile      PPM            │       ▼                       │
-│  CH3: AUTO/MAN ────────────────►│  Cube Orange+ ArduRover 4.6.3 │
-│  CH4: boost                     │  mode MANUAL permanent        │
+│  Télécommande J4C05             │  Raspberry Pi 5 (10 Hz)       │
+│  Stick safran  (CH1 récept)     │       │ MAVLink /dev/serial0  │
+│  Stick voile   (CH2 récept) PPM │       ▼                       │
+│  Levier mode   (CH5 récept)────►│  Cube Orange+ ArduRover 4.6.3 │
+│  → encodé Nano (chan4/5/6)      │  mode MANUAL permanent        │
 │                                 │       │                       │
 │                                 │  HERE4 RTK ──► Cube Orange+   │
 │                                 │  (corrections RTCM3 internes) │
@@ -46,7 +46,7 @@
 
 | Composant   | Modèle                          | Précision                                   |
 |-------------|---------------------------------|---------------------------------------------|
-| Calculateur | Raspberry Pi 4B                 | —                                           |
+| Calculateur | Raspberry Pi 5                  | —                                           |
 | Pilote auto | Cube Orange+ ArduRover 4.6.3    | —                                           |
 | GNSS        | HERE4 RTK                       | ±2 cm (RTK fix) / ±3 m (GPS seul)           |
 | LoRa        | ESP32 LoRa V3 + Meshtastic      | <500 m LOS                                  |
@@ -77,17 +77,14 @@ V2.0/
 │   └── state_machine.py          #   ATTENTE → EN_COURSE → STALL/PENALITE → FIN
 │
 ├── safety/                       # sécurités & pénalité & blocage
-│   ├── mode_switch.py            #   bascule MANUEL ↔ AUTO via CH3
+│   ├── mode_switch.py            #   bascule MANUEL ↔ AUTO via levier (chan6)
 │   ├── degraded_modes.py         #   GPS_LOST, RTK_DEGRADED, LORA_LOST,
 │   │                             #     WIND_STALE, LOW_BATTERY, MAVLINK_LOST,
 │   │                             #     STALL_DETECTED, ADVERSARY_SILENT
 │   ├── stall_detector.py         #   détection blocage (2/3 conditions, palier)
 │   ├── penalty_manager.py        #   séquence pénalité A→Z1→Z2 bâbord→Z1 bâbord
 │   │                             #     dual-mode (5 s pour bascule manuelle)
-│   └── logger.py                 #   logger CSV (~35 colonnes)
-│
-├── boost/
-│   └── boost_controller.py       #   BUDGET TOTAL BOOST_MAX_S (pas 3×30s)
+│   └── logger.py                 #   logger CSV (~30 colonnes)
 │
 ├── comms/
 │   ├── mavlink_iface.py          #   wrapper pymavlink (override + télémétrie)
@@ -108,7 +105,7 @@ V2.0/
 │   ├── test_logic_unit.py        #   tests unitaires (logique pure)
 │   ├── test_connexion.py         #   sanity hardware (MAVLink + LoRa)
 │   ├── test_servos.py            #   sweep gauche/centre/droite + voile
-│   ├── test_bascule.py           #   vérification CH3 manuel ↔ auto
+│   ├── test_bascule.py           #   vérification levier mode (chan6) manuel ↔ auto
 │   └── test_rtk.py               #   attend RTK_FIXED avant validation départ
 │
 ├── tools/
@@ -133,13 +130,13 @@ V2.0/
 
 ## Configuration des 3 drones
 
-| ID    | Rôle           | Boost | Slot TDMA | Stratégie       | Décalage départ |
-|-------|----------------|-------|-----------|-----------------|------------------|
-| U1B1  | **Scout**      | ✅    | t+0 ms    | aggressive      | t+0 s            |
-| U1B2  | **Optimizer**  | ❌    | t+500 ms  | vmg_optimal     | t+20 s           |
-| U1B3  | **Safety**     | ❌    | t+1000 ms | conservative    | t+40 s           |
+| ID    | Rôle           | Slot TDMA | Stratégie       | Décalage départ |
+|-------|----------------|-----------|-----------------|------------------|
+| U1B1  | **Scout**      | t+0 ms    | aggressive      | t+0 s            |
+| U1B2  | **Optimizer**  | t+500 ms  | vmg_optimal     | t+20 s           |
+| U1B3  | **Safety**     | t+1000 ms | conservative    | t+40 s           |
 
-Le code est **identique** sur les 3 drones. Une variable d'environnement `DRONE_ID` aiguille `config.py` qui charge le bon profil. Sur Pi 4B :
+Le code est **identique** sur les 3 drones. Une variable d'environnement `DRONE_ID` aiguille `config.py` qui charge le bon profil. Sur Pi 5 :
 
 ```bash
 echo 'DRONE_ID=U1B1' | sudo tee /etc/stormwings/drone_id.env
@@ -162,7 +159,7 @@ python3 -m tests.test_logic_unit
 python3 -m tools.simulator --wind-dir 90 --wind-speed 5
 ```
 
-### Sur Raspberry Pi 4B (déploiement réel)
+### Sur Raspberry Pi 5 (déploiement réel)
 
 ```bash
 sudo bash scripts/install.sh && sudo reboot
@@ -211,31 +208,12 @@ CAPTURE_RADIUS_GPS = 7.0   # m — fix_type 3-4 (GPS seul / DGPS)
 
 ---
 
-## Boost — règlement §2c
-
-> La **somme totale** des activations = `BOOST_MAX_S` secondes par course (valeur annoncée la veille au briefing). Ce n'est **PAS** 3 × 30 s.
-
-```python
-# config.py
-BOOST_MAX_S       = 30.0   # budget temps TOTAL par course
-BOOST_ACTIONS_MAX = 3      # nombre max d'activations
-```
-
-Activation automatique (priorité décroissante) :
-1. Vent < 1.5 m/s sur segment critique
-2. Vitesse < 0.3 m/s pendant > 15 s (et budget restant)
-3. Sortie de zone calme (entre F et G)
-
-Le contrôleur coupe le boost dès que la vitesse remonte (économie du budget).
-
----
-
 ## Pénalité — bascule manuel/auto
 
 ```
 Pénalité notifiée
         │
-        ├─ CH3 basculé MANUEL dans les 5 s ?
+        ├─ Levier mode basculé MANUEL dans les 5 s ?
         │      OUI → opérateur pilote (max 30 s RC, puis auto reprend)
         │      NON → séquence autonome :
         │              1. Cap vers Z1
@@ -264,7 +242,7 @@ Toute la logique est dans `safety/penalty_manager.py`. Le déclenchement program
 | Durée du blocage | Niveau   | Action                               |
 |------------------|----------|--------------------------------------|
 | 0 - 8 s          | LIGHT    | choquer voile + virer de bord        |
-| 8 - 15 s         | MEDIUM   | boost (si budget) + manœuvre         |
+| 8 - 15 s         | MEDIUM   | manœuvre de dégagement plus agressive|
 | > 15 s           | HARD     | log warning + proposer reprise RC    |
 
 `safety/stall_detector.py` expose le statut, `main.py` orchestre la réaction.
@@ -279,7 +257,7 @@ Toute la logique est dans `safety/penalty_manager.py`. Le déclenchement program
 | `RTK_DEGRADED`     | RTK perdu, GPS standard           | rayon capture → 7 m               |
 | `LORA_LOST`        | pas de trame > 10 s               | vent défaut (E 4.5 m/s) + solo    |
 | `WIND_STALE`       | vent > 30 s                       | idem `LORA_LOST`                  |
-| `LOW_BATTERY`      | < 11.1 V (< 20 %)                 | désactive boost                   |
+| `LOW_BATTERY`      | < 11.1 V (< 20 %)                 | log warning + reprise RC suggérée |
 | `MAVLINK_LOST`     | pas de heartbeat > 3 s            | pause + watchdog reset            |
 | `STALL_DETECTED`   | blocage > 3 s                     | manœuvre dégagement auto          |
 | `ADVERSARY_SILENT` | pas de P\|... > 10 s              | obstacle figé dernier relevé      |
@@ -313,7 +291,6 @@ Trame de 1500 ms / 3 slots de 500 ms pour la couche TDMA fine interne (extension
 ## Checklist J-2 → J0
 
 **J-2 (7 mai)**
-- [ ] Mettre à jour `BOOST_MAX_S` après annonce organisateurs
 - [ ] Vérifier canal Meshtastic = `BATTLEBOATS` sur les 3 ESP32
 - [ ] Simulateur parcours N°3 sur les 3 configs
 
@@ -329,7 +306,6 @@ Trame de 1500 ms / 3 slots de 500 ms pour la couche TDMA fine interne (extension
 - [ ] Briefing 9h30 → coordonnées bouées A B C D E F G Z1 Z2
 - [ ] `python3 -m tools.buoy_entry` → écrit `/etc/stormwings/buoys_today.json`
 - [ ] Fix RTK établi (`fix_type=6`) sur les 3 drones
-- [ ] Confirmer `BOOST_MAX_S` si valeur modifiée au briefing
 - [ ] Batteries de rechange chargées (3 courses requises)
 - [ ] Attestation RC disponible
 
@@ -337,7 +313,7 @@ Trame de 1500 ms / 3 slots de 500 ms pour la couche TDMA fine interne (extension
 
 ## Validation
 
-- **Tests unitaires** sur la logique pure (geo, polaire, VMG, layline, PID, anti-collision, protocole, boost, stall, penalty, RTK radius)
+- **Tests unitaires** sur la logique pure (geo, polaire, VMG, layline, PID, anti-collision, protocole, stall, penalty, RTK radius)
 - **Simulateur 2D** : course finie en ~7 min 30 s sur 990 m avec vent E 5 m/s
 - **Tests hardware** dédiés : connexion, servos, bascule manuel/auto, RTK fix
 

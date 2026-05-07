@@ -59,17 +59,27 @@ Vitesse en kbaud **× 1000**. Donc `57` ⇒ **57600 bauds**. Valeur compatible a
 
 ## 3. Servos
 
-### `SERVO1_FUNCTION = 1` ⚠️ **PARAMÈTRE CRITIQUE**
+> Setup matériel : encodeur **Arduino Nano** ArduPPM v2.3.16. Le PPM produit donne :
+> - `chan4_raw` ← CH1 récepteur Joysway → safran
+> - `chan5_raw` ← CH2 récepteur          → voile
+> - `chan6_raw` ← CH5 récepteur          → levier 3 positions (mode)
+>
+> Voir `SwarmZ_fichier_Orga/NouvelEncodeur/` pour la chaîne physique complète.
 
-Mode **RCPassThru** sur le servo de safran.
+### `SERVO1_FUNCTION = 26` ⚠️ **PARAMÈTRE CRITIQUE**
+
+**GroundSteering** sur MAIN OUT 1 (servo de safran).
 
 | Valeur | Comportement                                        | Conséquence StormWings |
 |--------|-----------------------------------------------------|------------------------|
 | 0      | Désactivé                                           | ❌ Servo ne bouge jamais |
-| **1**  | **RCPassThru** : transmet RC ou override Pi         | ✅ Cible attendue       |
-| 26     | GroundSteering : ArduPilot recalcule en permanence  | ❌ Override Pi écrasé   |
+| 1      | RCPassThru → utilise RC channel **1** brut          | ❌ chan1 saturé (pull-up Nano) |
+| **26** | **GroundSteering** : passthrough proportionnel de RCMAP_ROLL en MANUAL | ✅ Cible attendue (RCMAP_ROLL=4 → chan4) |
+| 54     | k_rcin4 → utilise RC channel 4 brut                 | Alternative possible (équivalent) |
 
-> **Si tes overrides Pi ne fonctionnent pas, vérifier ce paramètre EN PREMIER.**
+> **Pourquoi 26 et pas 1 ?** Avec le setup NouvelEncodeur, le safran arrive sur **chan4**, pas chan1. Et `SERVO1_FUNCTION=1` lit chan1 (pull-up Nano = saturé). On utilise donc `26` qui prend l'input via `RCMAP_ROLL=4`. En mode MANUAL, GroundSteering est un simple passthrough proportionnel — ArduPilot ne fait pas de PID en MANUAL pour les rovers.
+>
+> Les overrides MAVLink envoyés par le Pi sur **chan4** sont vus par GroundSteering comme un "stick déplacé" et passent au servo.
 
 ### `SERVO1_MIN/MAX/TRIM = 1100 / 1900 / 1500`
 Plage µs du gouvernail. Centre à **1500 µs**, butée gauche à 1100, butée droite à 1900. Soit ±400 µs.
@@ -77,37 +87,42 @@ Plage µs du gouvernail. Centre à **1500 µs**, butée gauche à 1100, butée d
 > Si le safran ne va pas en butée mécanique, augmenter à 1000/2000. Si au contraire il "frappe" le bout, réduire à 1200/1800.
 
 ### `SERVO2_FUNCTION = 89`
-**MainSail** — ArduRover gère la position du winch de voile. Cohérent avec `SAIL_ENABLE=1`.
+**MainSail** sur MAIN OUT 2. ArduRover gère la position du winch de voile en mode AUTO ; en mode MANUAL c'est un passthrough de `RCMAP_THROTTLE = 5` (= chan5). Cohérent avec `SAIL_ENABLE=1`.
 
-> Pour pilotage **passthrough total** depuis le Pi (notre cas) : mettre `SERVO2_FUNCTION = 1`. Sinon ArduRover peut interférer avec nos commandes voile.
+> Les overrides MAVLink du Pi sur chan5 sont relayés par MainSail au servo.
 
-### `SERVO5_FUNCTION = 89`
-Optionnel — pour une foc séparée. Si pas de foc, laisser à 0 sans conséquence.
-
-### `SERVO4_FUNCTION = 1`
-**Boost (CH4)** — RCPassThru pour permettre au Pi d'overrider le moteur de boost via `RC_CHANNELS_OVERRIDE`. **Uniquement pertinent sur U1B1**.
+### `SERVO3_FUNCTION = 0`, `SERVO4_FUNCTION = 0`, `SERVO5_FUNCTION = 0`, `SERVO6_FUNCTION = 0`
+MAIN OUT 3/4/5/6 inutilisés. La sortie 5 du rail sert à l'alim BEC (5V vers les servos), pas à un signal PWM. Seules MAIN OUT 1 (safran) et MAIN OUT 2 (voile) sont câblées sur la carte UTT.
 
 ---
 
 ## 4. RC IN
 
 ### `RC_PROTOCOLS = 1`
-**PPM uniquement**. L'encodeur BCUBE convertit les PWM individuels du récepteur en un flux PPM combiné.
+**PPM uniquement**. L'encodeur Arduino Nano (ArduPPM v2.3.16) convertit les PWM individuels du récepteur Joysway J5C01R en un flux PPM combiné transmis au Cube via MAIN OUT 1 du Nano (D10).
 
-> Si tu vois `No RC` dans Mission Planner alors que la radio est allumée, c'est probablement ici (ou un câble RC IN débranché).
+> Si tu vois `No RC` dans Mission Planner alors que la radio est allumée :
+> 1. récepteur J5C01R alimenté ? (LED allumée)
+> 2. Nano alimenté ? (5V depuis le Cube via RCIN, cf. `docs/CABLAGE.md`)
+> 3. câble PPM (D10 du Nano → RCIN signal du Cube) bien branché ?
 
-### `MODE_CH = 3`
-Le **canal 3** (levier de la radio) sélectionne le mode. Permet d'avoir 6 modes mappés sur les positions du levier.
+### `RCMAP_ROLL = 4`, `RCMAP_THROTTLE = 5`, `RCMAP_PITCH = 6`
+Mapping ArduPilot ↔ canaux PPM. Le firmware ArduPPM ne sort pas les signaux dans l'ordre 1→8 — il sort le CH1 récepteur sur PPM ch4, CH2 sur ch5, CH5 sur ch6 (par design du firmware). Ces `RCMAP_*` rétablissent le mapping logique côté ArduRover.
+
+> Si tu pars sur le setup BCUBE (ancien, pas recommandé), il faut au contraire `RCMAP_ROLL=1, RCMAP_THROTTLE=3` car le BCUBE conserve l'ordre PPM ch1=CH1.
+
+### `MODE_CH = 6`
+Le **canal 6 PPM** (qui correspond au levier 3 positions de la J4C05 → CH5 récepteur → D7 Nano) sélectionne le mode ArduRover. Permet d'avoir 6 modes mappés sur les positions du levier.
 
 ### `MODE1..MODE6 = 0`
 
 Tous les modes ArduRover = **MANUAL (0)**.
 
-> 🎯 Pourquoi tout en MANUAL ? Parce que **la bascule auto/manuel se fait côté Pi**, pas côté ArduPilot. Le Pi lit `RC_CHANNELS.chan3_raw` :
-> - `< 1300 µs` ⇒ Pi prend la main, envoie `RC_CHANNELS_OVERRIDE`
-> - `> 1700 µs` ⇒ Pi cesse les overrides, le Cube redevient passthrough RC pur
+> 🎯 Pourquoi tout en MANUAL ? Parce que **la bascule auto/manuel se fait côté Pi**, pas côté ArduPilot. Le Pi lit `RC_CHANNELS.chan6_raw` (constante `config.CH_MODE`) :
+> - `< 1300 µs` ⇒ Pi prend la main, envoie `RC_CHANNELS_OVERRIDE` sur chan4/chan5
+> - `> 1500 µs` ⇒ Pi cesse les overrides, ArduRover redevient passthrough RC pur
 >
-> Du point de vue d'ArduPilot, on est **toujours** en MANUAL, ce qui simplifie tout.
+> Du point de vue d'ArduPilot, on est **toujours** en MANUAL, ce qui simplifie tout et évite les comportements GUIDED/HOLD imprévus.
 
 ---
 
@@ -199,10 +214,13 @@ Après `Write Params` + reboot, **vérifier dans Mission Planner** :
 ```
 [ ] HUD affiche le numsat ≥ 8 (et idéalement gpsstatus = 6 = RTK Fixed)
 [ ] HUD affiche le heading qui change quand on tourne le drone
-[ ] Onglet Status → ch1in / ch2in / ch3in changent quand on bouge la radio
-[ ] Onglet Status → ch1out / ch2out suivent ch1in / ch2in (RCPassThru OK)
+[ ] Onglet Status → ch4in change quand on bouge le stick gauche/droite (safran)
+[ ] Onglet Status → ch5in change quand on bouge le stick haut/bas    (voile)
+[ ] Onglet Status → ch6in montre 3 plages distinctes (~950 / ~1500 / ~2050)
+                    selon la position du levier 3 positions
+[ ] Onglet Status → ch1out suit ch4in (GroundSteering passthrough en MANUAL)
+[ ] Onglet Status → ch2out suit ch5in (MainSail passthrough en MANUAL)
 [ ] Pas de "Bad Compass" ni "Bad GPS" en bas du HUD
-[ ] CH3 affiche 3 plages distinctes (~950, ~1500, ~2050) selon la position du levier
 ```
 
 Si tout est ✅, ArduPilot est prêt pour le Pi.
@@ -225,10 +243,15 @@ Dans **Mission Planner → Setup → Mandatory Hardware** :
 
 Une fois validé, **ne pas modifier** sans raison forte :
 
-- `SERVO1_FUNCTION` — toujours 1 (RCPassThru)
-- `MODE1..MODE6` — toujours 0 (la bascule est côté Pi)
-- `FS_GCS_ENABLE` — toujours 0 (sinon HOLD intempestif)
-- `RC_PROTOCOLS` — toujours 1 (PPM)
+- `SERVO1_FUNCTION = 26` (GroundSteering, lit RCMAP_ROLL=4)
+- `SERVO2_FUNCTION = 89` (MainSail, lit RCMAP_THROTTLE=5)
+- `RCMAP_ROLL = 4`, `RCMAP_THROTTLE = 5` (matchent le PPM Nano)
+- `MODE_CH = 6` (le levier 3 positions sort sur PPM ch6)
+- `MODE1..MODE6 = 0` (la bascule est côté Pi, pas ArduPilot)
+- `FS_GCS_ENABLE = 0` (sinon HOLD intempestif au moindre microlag du Pi)
+- `SYSID_THISMAV = 1` (sinon le Pi ne peut pas demander les streams)
+- `RC_PROTOCOLS = 1` (PPM)
+- `SR2_RC_CHAN = 10` (le stream RC à 10 Hz sur TELEM2 est INDISPENSABLE)
 
 Tout le reste est ajustable selon les conditions du jour.
 

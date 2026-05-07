@@ -5,7 +5,8 @@ Test 1 : connexion aux périphériques.
 Vérifie :
     - Heartbeat MAVLink en provenance du Cube Orange+
     - Réception GPS_RAW_INT et GLOBAL_POSITION_INT
-    - Réception RC_CHANNELS (notamment CH3 mobile entre ~900 et ~2000 µs)
+    - Réception RC_CHANNELS (notamment chan6_raw, le levier de mode, qui
+      doit varier entre ~950 et ~2050 µs en bougeant le levier 3 positions)
     - Connexion à l'ESP32 LoRa V3 (Meshtastic)
     - Présence du canal BATTLEBOATS
 
@@ -52,13 +53,13 @@ def test_mavlink() -> bool:
         if now - last_print > 1.0:
             log.info(
                 "GPS=%s fix=%d sats=%d | lat=%.6f lon=%.6f hdg=%.0f° spd=%.2fm/s "
-                "| RC: ch1=%d ch2=%d ch3=%d | bat=%.1fV",
+                "| RC: rudder(ch%d)=%d sail(ch%d)=%d mode(ch%d)=%d | bat=%.1fV",
                 "OK" if tlm.has_gps_fix else "NO",
                 tlm.fix_type, tlm.sats_visible,
                 tlm.lat, tlm.lon, tlm.heading_deg, tlm.ground_speed_ms,
-                tlm.rc_channels.get(1, 0),
-                tlm.rc_channels.get(2, 0),
-                tlm.rc_channels.get(3, 0),
+                config.CH_RUDDER, tlm.rc_channels.get(config.CH_RUDDER, 0),
+                config.CH_SAIL,   tlm.rc_channels.get(config.CH_SAIL, 0),
+                config.CH_MODE,   tlm.rc_channels.get(config.CH_MODE, 0),
                 tlm.voltage_v,
             )
             last_print = now
@@ -69,8 +70,12 @@ def test_mavlink() -> bool:
     if not final.has_gps_fix:
         log.warning("⚠ GPS sans fix — vérifier antenne et ciel ouvert")
         ok = False
-    if final.rc_channels.get(3, 0) == 0:
-        log.warning("⚠ CH3 jamais reçu — vérifier émetteur RC allumé")
+    if final.rc_channels.get(config.CH_MODE, 0) == 0:
+        log.warning(
+            "⚠ Levier mode jamais reçu (chan%d=0) — vérifier émetteur RC "
+            "allumé, encodeur Nano alimenté, et bouger le levier 3 positions",
+            config.CH_MODE,
+        )
         ok = False
     if final.voltage_v < 10.0:
         log.warning("⚠ Tension batterie faible : %.2fV", final.voltage_v)

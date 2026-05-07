@@ -30,7 +30,7 @@ Sur ton PC, télécharger **Raspberry Pi Imager** : https://www.raspberrypi.com/
 
 | Réglage Imager                 | Valeur                                       |
 |--------------------------------|----------------------------------------------|
-| Device                         | **Raspberry Pi 4**                           |
+| Device                         | **Raspberry Pi 5**                           |
 | OS                             | **Raspberry Pi OS Lite (64-bit)** (Bookworm) |
 | Storage                        | microSD ≥ 32 GB                              |
 
@@ -135,18 +135,27 @@ BEC 5V 3A (ou Castle CC BEC) ─────┬──► PWR IN du Cube Orange+
 
 > **Erreur n°1 à éviter** : oublier d'alimenter le **rail MAIN OUT 5** → les servos ne reçoivent rien et personne ne comprend pourquoi.
 
-### 2.2. Récepteur RC → Encodeur BCUBE → Cube RCIN
+### 2.2. Récepteur Joysway J5C01R → Arduino Nano → Cube RCIN
 
-| Source              | Destination          | Couleur     | Notes                  |
-|---------------------|----------------------|-------------|------------------------|
-| J5C01R port 1       | BCUBE IN1            | 3 fils      | Stick safran (CH1)     |
-| J5C01R port 2       | BCUBE IN2 (signal)   | Orange      | Stick voile (CH2)      |
-| J5C01R port 3       | BCUBE IN3 (signal)   | Jaune       | **Levier mode CH3**    |
-| J5C01R port 4       | BCUBE IN4 (signal)   | Vert        | Boost CH4 (U1B1 only)  |
-| BCUBE prise 4 pins  | Cube RC IN           | 3 fils      | GND-PPM-+5V            |
+> Setup officiel **NouvelEncodeur** : l'encodeur PPM est un **Arduino Nano** flashé ArduPPM v2.3.16 (PAS un BCUBE). Le récepteur Joysway sort 5 PWM (CH1 à CH5), seuls CH1, CH2 et CH5 sont utilisés.
 
-> **Cavalier non soudé** sur l'encodeur BCUBE — il sera alimenté par le Cube via RCIN.
-> **MUX non connecté** côté Cube.
+| Source              | Destination          | Couleur     | Notes                            |
+|---------------------|----------------------|-------------|----------------------------------|
+| J5C01R **CH1** sig  | Nano **D3**          | 3 fils      | Stick safran                     |
+| J5C01R **CH2** sig  | Nano **D4**          | Orange      | Stick voile                      |
+| J5C01R **CH5** sig  | Nano **D7**          | Jaune       | **Levier 3 positions (mode)**    |
+| J5C01R GND          | Nano GND             | Noir        | Masse commune                    |
+| Nano **D10** (PPM)  | Cube RCIN pin 1      | Blanc/vert  | Sortie PPM combinée              |
+| Nano GND            | Cube RCIN pin 3      | Noir        | Masse                            |
+| Nano +5V (in)       | Cube RCIN pin 2      | Rouge       | Alim Nano par le Cube            |
+
+> ⚠️ **Pull-ups obligatoires** : relier RX0, TX1 et D2 du Nano au +5V (sinon fausses interruptions).
+>
+> ⚠️ **Le levier mode est sur CH5 du récepteur**, pas CH3 — bien identifier physiquement le levier 3 positions sur ta J4C05 avant de souder.
+>
+> Voir détail complet dans `docs/CABLAGE.md` §B/C, et schémas officiels dans `SwarmZ_fichier_Orga/NouvelEncodeur/`.
+
+> ❗ **Avant de câbler**, le Nano doit être **flashé** avec `ArduPPM_v2.3.16_ATMega328p_for_ArduPlane.hex` (téléchargeable sur https://download.ardupilot.org/downloads/wiki/advanced_user_tools/) via avrdude / Arduino IDE. Voir `docs/CABLAGE.md` §C pour la commande.
 
 ### 2.3. Cube TELEM2 → Raspberry Pi UART
 
@@ -163,12 +172,12 @@ Connecteur JST-GH 6 pins sur le Cube. Seulement 3 fils utilisés.
 
 ### 2.4. Servos sur MAIN OUT
 
-| MAIN OUT | Servo                    | Notes                                      |
-|----------|--------------------------|--------------------------------------------|
-| OUT 1    | Safran (gouvernail)      | **Connecteur retourné 180°** sur Cube Orange+ Plus |
-| OUT 2    | Voile (winch)            | Idem retourner                             |
-| OUT 4    | Boost (U1B1 uniquement)  | Idem retourner                             |
-| OUT 5    | (BEC 5V — alim rail)     | NON un servo, c'est l'alim                 |
+| MAIN OUT | Servo                    | SERVO_FUNCTION  | Notes                                      |
+|----------|--------------------------|-----------------|--------------------------------------------|
+| OUT 1    | Safran (gouvernail)      | 26 (GroundSteering) | **Connecteur retourné 180°** sur Cube Orange+ Plus |
+| OUT 2    | Voile (winch)            | 89 (MainSail)   | Idem retourner                             |
+| OUT 4    | Boost (U1B1 uniquement)  | 57 (k_rcin7)    | Idem retourner                             |
+| OUT 5    | (BEC 5V — alim rail)     | —               | NON un servo, c'est l'alim                 |
 
 > **Erreur n°2 à éviter** : ne pas retourner les connecteurs servo sur Cube Orange Plus (GND est en haut au lieu d'en bas). Vérifier au multimètre : +5V entre fil rouge (milieu) et GND.
 
@@ -187,13 +196,15 @@ Batterie ──► BEC 5V ──┬──► Cube PWR IN
                        ├──► J5C01R alim
                        └──► MAIN OUT 5 (rail servos)
 
-J5C01R ──PWM──► BCUBE ──PPM──► Cube RC IN
+J5C01R ──PWM──► Arduino Nano ──PPM (D10)──► Cube RC IN
+   CH1 → D3   (gouvernail → PPM ch4 / RCMAP_ROLL=4)
+   CH2 → D4   (voile      → PPM ch5 / RCMAP_THROTTLE=5)
+   CH5 → D7   (levier mode → PPM ch6 / MODE_CH=6)
 
 Cube TELEM2 ──UART──► Pi GPIO 14/15
 Cube CAN 1  ──CAN──► HERE4 RTK
-Cube MAIN OUT 1 ──PWM──► Servo safran
-Cube MAIN OUT 2 ──PWM──► Servo voile
-Cube MAIN OUT 4 ──PWM──► Boost (U1B1)
+Cube MAIN OUT 1 ──PWM──► Servo safran     (SERVO1_FUNCTION=26)
+Cube MAIN OUT 2 ──PWM──► Servo voile      (SERVO2_FUNCTION=89)
 
 Pi USB ──► ESP32 LoRa V3
 Pi GPIO ──UART──► Cube TELEM2
@@ -233,14 +244,19 @@ Mission Planner → Config → Full Parameter Tree
 2. **Boussole** : `Setup → Mandatory Hardware → Compass → Onboard Mag Calibration`
    (faire tourner le drone dans tous les sens 60-90 s)
 3. **Radio** : `Setup → Mandatory Hardware → Radio Calibration → Calibrate Radio`
-   - Bouger les sticks à fond dans tous les sens
-   - **Vérifier impérativement** : CH1 (safran) varie ~1100→1900 µs, CH2 (voile) idem, CH3 doit montrer **3 positions distinctes** quand tu bouges le levier (~900 / ~1500 / ~2000 µs)
+   - Bouger les sticks à fond dans tous les sens + le levier 3 positions
+   - **Vérifier impérativement** dans la fenêtre Mission Planner :
+     - **chan4** (safran) varie ~1100 → 1900 µs au stick gauche/droite
+     - **chan5** (voile) varie ~1100 → 1900 µs au stick haut/bas
+     - **chan6** (levier mode) montre **3 positions distinctes** (~950 / ~1500 / ~2050 µs)
+   - Si chan4/5/6 = 0 ou ne bougent pas → revoir §2.2 (câblage Nano + pull-ups RX0/TX1/D2)
 
 ### 3.5. Vérification servos passthrough
 
-Avec CH3 en position **HAUTE** (mode MANUAL), bouger le stick CH1 :
-- Le safran doit suivre le stick **immédiatement**.
-- Si non → revérifier `SERVO1_FUNCTION=1` (RCPassThru) et le sens du connecteur.
+Avec le **levier 3 positions en HAUT** (chan6 > 1700 µs), bouger le stick safran :
+- Le safran doit suivre le stick **immédiatement** (passthrough GroundSteering en MANUAL).
+- Idem voile sur le stick voile.
+- Si non → revérifier `SERVO1_FUNCTION=26` (GroundSteering), `RCMAP_ROLL=4`, et le sens du connecteur servo.
 
 ### 3.6. Vérification fix RTK (en extérieur)
 
@@ -250,7 +266,7 @@ Sortir le drone dehors, ciel ouvert. Dans `Flight Data → Status` :
 
 > Si le RTK ne fixe pas, vérifier que la station de base RTCM3 émet bien (ou activer le mode SBAS au pire).
 
-✅ **Phase 3 terminée** : Cube paramétré, calibré, fix RTK obtenu. Le levier CH3 fonctionne en bascule.
+✅ **Phase 3 terminée** : Cube paramétré, calibré, fix RTK obtenu. Le levier 3 positions fonctionne en bascule (chan6 visible côté Pi).
 
 ---
 
@@ -313,7 +329,7 @@ DRONE_ID=U1B1 python3 -m tests.test_connexion
 
 Ce que tu dois voir :
 - `[MAV] Connecté` puis lecture des coordonnées GPS, vitesse, cap
-- `RC: ch1=1500 ch2=1500 ch3=1900` qui changent quand tu bouges la radio
+- `RC: rudder(ch4)=1500 sail(ch5)=1500 mode(ch6)=1900` qui changent quand tu bouges la radio (sticks + levier 3 positions)
 - `Vent=...° ...m/s` quand la station Calypso émet (peut prendre 60 s)
 
 ### 5.2. Test fix RTK
@@ -326,11 +342,11 @@ DRONE_ID=U1B1 python3 -m tests.test_rtk
 
 Si ça timeout, sortir plus à découvert et attendre.
 
-### 5.3. Test servos (CH3 BAS = mode AUTO)
+### 5.3. Test servos (levier mode BAS = AUTO)
 
 ⚠️ **Tenir le bateau ou le bloquer sur ses bers**.
 
-Mettre le levier CH3 **EN BAS** sur la radio.
+Mettre le **levier 3 positions EN BAS** sur la radio (chan6 < 1300 µs).
 
 ```bash
 # [Pi]
@@ -344,7 +360,7 @@ Tu dois voir :
 
 Si rien ne bouge :
 - Vérifier l'alimentation rail MAIN OUT 5
-- Vérifier `SERVO1_FUNCTION=1`
+- Vérifier `SERVO1_FUNCTION=26` et `RCMAP_ROLL=4`
 - Vérifier le sens du connecteur servo
 
 ### 5.4. Test bascule manuel/auto
@@ -354,9 +370,9 @@ Si rien ne bouge :
 DRONE_ID=U1B1 python3 -m tests.test_bascule
 ```
 
-Bouger le levier CH3 :
-- **CH3 BAS** → le safran fait des allers-retours auto. Logs : `[AUTO] CH3=...`
-- **CH3 HAUT** → le safran cesse. Le stick CH1 reprend le contrôle. Logs : `[MANUAL] CH3=...`
+Bouger le levier 3 positions :
+- **Levier BAS** (chan6 < 1300 µs) → le safran fait des allers-retours auto. Logs : `[AUTO] mode(ch6)=...`
+- **Levier HAUT** (chan6 > 1500 µs) → le safran cesse. Le stick reprend le contrôle. Logs : `[MANUAL] mode(ch6)=...`
 
 Ctrl+C pour arrêter.
 
@@ -392,20 +408,20 @@ L'ordre des tests sur l'eau est crucial — on commence simple et on monte en co
 ### 6.1. Mise à l'eau + checklist sécurité (15 min × drone)
 
 - [ ] Batterie chargée (mesurée > 12.0 V)
-- [ ] CH3 **HAUT** au démarrage (RC reprend la main par défaut)
+- [ ] **Levier 3 positions HAUT** au démarrage (RC reprend la main par défaut)
 - [ ] Fix RTK confirmé sur le Pi (`tests/test_rtk.py` ou bandeau Mission Planner)
 - [ ] LoRa : la station Calypso émet bien (vérifier dans le log Pi : `[LoRa-RX] WIND ...`)
 
-### 6.2. Vérif manuelle (CH3 HAUT) — 5 min
+### 6.2. Vérif manuelle (levier HAUT) — 5 min
 
 Faire une boucle simple en pilotant à la radio. Vérifier :
 - Le safran réagit bien et dans le bon sens
 - La voile s'ouvre/ferme correctement
 - Le bateau n'a pas de défaut hydrodynamique
 
-### 6.3. Activation auto pour la première fois (CH3 BAS) — 10 min
+### 6.3. Activation auto pour la première fois (levier BAS) — 10 min
 
-Le drone va commencer à agir tout seul. Test à courte distance, **garder la main pour rebasculer CH3 HAUT à tout moment**.
+Le drone va commencer à agir tout seul. Test à courte distance, **garder la main pour rebasculer le levier en HAUT à tout moment**.
 
 Vérifier dans `journalctl -u stormwings -f` :
 - `[NAV] ATTENTE → REMONTEE_VENT` (par exemple)
@@ -423,7 +439,7 @@ DRONE_ID=U1B1 python3 -m calibration.polar_calibration --wind-source lora
 
 Le script va te demander 8 passes de 30 s à différents angles (40°, 50°, ..., 180°). Pour chaque :
 1. Mettre le drone sur l'allure cible (radio en MANUEL pendant la stabilisation)
-2. Quand il navigue stable au TWA voulu depuis ≥ 10 s, repasser CH3 BAS et taper ENTER
+2. Quand il navigue stable au TWA voulu depuis ≥ 10 s, repasser le levier en BAS et taper ENTER
 3. Le script échantillonne 30 s en mode auto
 4. Recommencer pour l'angle suivant
 
@@ -500,17 +516,7 @@ ssh admin@stormwings-u1b2.local 'sudo mv /tmp/buoys_today.json /etc/stormwings/'
 # Idem pour U1B3
 ```
 
-### 7.3. Confirmer le BOOST_MAX_S
-
-Si les organisateurs annoncent une autre valeur que 30 s :
-
-```bash
-# [Pi sur U1B1 — seul à embarquer le boost]
-sudo sed -i 's/^BOOST_MAX_S: float = .*/BOOST_MAX_S: float = 45.0/' \
-    ~/code/stormwings/V2.0/config.py
-```
-
-### 7.4. Pré-vol final
+### 7.3. Pré-vol final
 
 Sur **chaque drone** :
 
@@ -520,25 +526,24 @@ DRONE_ID=U1B1 python3 -m tests.test_rtk          # fix RTK confirmé
 sudo systemctl restart stormwings
 sudo journalctl -u stormwings -f | head -20
 # Vérifier : "Capture radius=4.0 RTK / 7.0 GPS"
-#            "Boost max=45.0s/3 actions" (ou la valeur du jour)
 ```
 
-### 7.5. Mise à l'eau
+### 7.4. Mise à l'eau
 
-CH3 **HAUT** = pilotage RC manuel pour la mise à l'eau. Quand le drone est positionné dans la zone de départ, basculer CH3 **BAS** : le Pi prend la main. Logs :
+**Levier 3 positions HAUT** = pilotage RC manuel pour la mise à l'eau. Quand le drone est positionné dans la zone de départ, basculer le **levier en BAS** : le Pi prend la main. Logs :
 
 ```
-[MODE] Bascule MANUAL → AUTO (CH3=950µs)
+[MODE] Bascule MANUAL → AUTO (chan6=950µs)
 [NAV] ATTENTE → REMONTEE_VENT (vmg)
 ```
 
-### 7.6. Pendant la course
+### 7.5. Pendant la course
 
 - Surveiller `journalctl -u stormwings -f` (sur 1 Pi via SSH WiFi terrain)
 - Garder la radio prête pour reprendre la main si nécessaire
-- Si pénalité notifiée par les juges : on a 5 s pour basculer CH3 HAUT — sinon le drone fait le tour Z1/Z2/Z1 tout seul
+- Si pénalité notifiée par les juges : on a 5 s pour basculer le levier en HAUT — sinon le drone fait le tour Z1/Z2/Z1 tout seul
 
-### 7.7. Après la course
+### 7.6. Après la course
 
 Récupérer les CSV de log :
 
@@ -556,11 +561,11 @@ cd D:/touon/V2.0
 python3 -m tools.replay_log logs_U1B1/flight_U1B1_*.csv
 ```
 
-✅ **Course terminée**. Si une 2ème course est prévue, **resetter le boost** :
+✅ **Course terminée**. Si une 2ème course est prévue :
 
 ```bash
 # [Pi]
-sudo systemctl restart stormwings   # remet le compteur boost à zéro
+sudo systemctl restart stormwings   # repart proprement pour la course suivante
 ```
 
 ---
@@ -569,10 +574,11 @@ sudo systemctl restart stormwings   # remet le compteur boost à zéro
 
 | Symptôme                                      | Cause probable                              | Solution                                       |
 |-----------------------------------------------|---------------------------------------------|------------------------------------------------|
-| `[MAV] Pas de heartbeat`                      | UART non câblé / TX-RX pas croisés          | Vérifier câbles TELEM2 + `SERIAL2_PROTOCOL=2`  |
+| `[MAV] Pas de heartbeat`                      | UART non câblé / TX-RX pas croisés          | Vérifier câbles TELEM2 + `SERIAL2_PROTOCOL=2` + `SYSID_THISMAV=1`  |
 | Servos ne bougent jamais                      | Rail MAIN OUT non alimenté                  | Brancher BEC sur OUT 5                         |
-| Servo bouge 1 fois puis bloque                | `SERVO1_FUNCTION ≠ 1`                       | Mettre `SERVO1_FUNCTION=1` (RCPassThru)        |
-| CH3 jamais reçu                               | RC éteinte / encodeur PPM débranché         | Allumer J4C05 ; vérifier RCIN du Cube          |
+| Servo bouge 1 fois puis bloque                | `SERVO1_FUNCTION` ou `RCMAP_ROLL` faux      | `SERVO1_FUNCTION=26`, `RCMAP_ROLL=4`           |
+| Levier mode jamais reçu (chan6=0)             | RC éteinte / Nano débranché / pull-ups absents | Allumer J4C05 ; vérifier alim Nano via RCIN ; tirer RX0/TX1/D2 au +5V |
+| chan4 ou chan5 = 0                            | Câblage récepteur → Nano cassé              | Vérifier J5C01R CH1→D3, CH2→D4                 |
 | Bascule MANUAL/HOLD en boucle                 | `FS_GCS_ENABLE=1`                           | Mettre `FS_GCS_ENABLE=0`                       |
 | `[LoRa] Échec ouverture /dev/ttyUSB0`         | ESP32 débranché / dans `/dev/ttyACM0`       | `ls /dev/tty*` puis adapter `LORA_PORT`        |
 | Le drone "serpente" en cap                    | PID trop agressif                           | Réduire `HEADING_PID_KP`, augmenter `KD`       |

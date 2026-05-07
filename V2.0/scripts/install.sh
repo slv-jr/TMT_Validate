@@ -1,5 +1,6 @@
 #!/bin/bash
-# StormWings — installation sur Raspberry Pi 4B (Raspbian Bookworm 64-bit)
+# StormWings — installation sur Raspberry Pi 5 (Raspberry Pi OS Bookworm 64-bit)
+# Compatible aussi avec Pi 4B (chemin /boot/firmware/config.txt vs /boot/config.txt auto-détecté)
 #
 # Ce script doit être lancé avec sudo :
 #     sudo bash scripts/install.sh

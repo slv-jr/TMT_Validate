@@ -13,7 +13,7 @@ Machine à états de navigation principale (cf. README2).
     STALL_RECOVERY       → manœuvre dégagement auto (cf. stall_detector)
     PENALITE             → tour pénalité Z1/Z2/Z1 (cf. penalty_manager)
     DEGRADE              → mode dégradé (perte GPS/LoRa)
-    REPRISE_RC           → reprise télécommande (CH3 haut)
+    REPRISE_RC           → reprise télécommande (levier mode HAUT, chan6 > 1500)
     FIN_COURSE           → post-arrivée, logging
 """
 

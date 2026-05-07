@@ -10,9 +10,9 @@ Le règlement BattleBoats 2026 impose, en cas de pénalité notifiée :
 Politique de bascule (cf. README2) :
     - Au déclenchement d'une pénalité : on entre en sous-état `WAIT`.
     - Pendant `PENALTY_DECISION_TIMEOUT_S` (5 s) le pilote peut basculer
-      CH3 en MANUEL — alors le sous-état devient `MANUAL` et l'auto cède.
-      L'opérateur est limité à `PENALTY_MANUAL_MAX_S` (30 s) puis l'auto
-      reprend (règlement §3.4).
+      le levier de mode (config.CH_MODE) en HAUT (MANUEL) — alors le
+      sous-état devient `MANUAL` et l'auto cède. L'opérateur est limité
+      à `PENALTY_MANUAL_MAX_S` (30 s) puis l'auto reprend (règlement §3.4).
     - Si le pilote ne bascule pas → sous-état `AUTO` : on enchaîne la
       séquence Z1/Z2/Z1.
 

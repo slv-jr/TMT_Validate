@@ -6,19 +6,21 @@ la variable d'environnement DRONE_ID qu'on règle au lancement du service system
 (ou en CLI : `DRONE_ID=U1B2 python3 main.py`).
 
 ID officiels (cf. BATTLEBOATS_LORA_PROTOCOL_v5.pdf, équipe UTT) :
-    U1B1 → drone 1 (Scout, embarque le moteur boost)
+    U1B1 → drone 1 (Scout)
     U1B2 → drone 2 (Optimizer)
     U1B3 → drone 3 (Safety)
 
-IMPORTANT — paramètres ArduPilot validés PoC SwarmZ :
-    SERVO1_FUNCTION=1 (RCPassThru) et SERVO2_FUNCTION=89 (MainSail) sont
-    requis. Avec SERVO_FUNCTION=0 le servo est désactivé. Voir
-    docs/ARDUPILOT_PARAMS.md.
+IMPORTANT — paramètres ArduPilot validés (setup NouvelEncodeur officiel) :
+    Encodeur PPM = Arduino Nano flashé ArduPPM v2.3.16. Mapping côté Cube :
+        chan4_raw  ← CH1 récepteur Joysway J5C01R  → safran (RCMAP_ROLL=4)
+        chan5_raw  ← CH2 récepteur                  → voile  (RCMAP_THROTTLE=5)
+        chan6_raw  ← CH5 récepteur (levier mode)    → MODE_CH=6
+    Voir docs/ARDUPILOT_PARAMS.md et SwarmZ_fichier_Orga/NouvelEncodeur/.
 
 Stratégie générale (cf. README2) :
     - Mode MANUAL permanent côté Cube ; le Pi écrit RC_CHANNELS_OVERRIDE
-      sur CH1/CH2 (et CH4 pour le boost de U1B1) à 10 Hz.
-    - Bascule MANUEL/AUTO via CH3 (lue par le Pi en MAVLink).
+      sur chan4/chan5 (safran/voile) à 10 Hz.
+    - Bascule MANUEL/AUTO via le levier de mode lu sur chan6_raw côté Pi.
     - Position EKF du Cube + corrections RTCM3 du HERE4 → fix RTK.
     - Rayon de capture des bouées ADAPTATIF selon le fix : 4 m en RTK,
       7 m en fallback GPS standard.
@@ -65,21 +67,18 @@ _DRONE_PROFILES: Dict[str, Dict] = {
         "role": ROLE_SCOUT,
         "tdma_slot_ms": 0,
         "race_start_offset_s": 0.0,    # part en premier
-        "has_boost": True,
         "strategy": "aggressive",
     },
     "U1B2": {
         "role": ROLE_OPTIMIZER,
         "tdma_slot_ms": 500,
         "race_start_offset_s": 20.0,   # 20 s après le Scout
-        "has_boost": False,
         "strategy": "vmg_optimal",
     },
     "U1B3": {
         "role": ROLE_SAFETY,
         "tdma_slot_ms": 1000,
         "race_start_offset_s": 40.0,
-        "has_boost": False,
         "strategy": "conservative",
     },
 }
@@ -88,7 +87,6 @@ _PROFILE = _DRONE_PROFILES.get(DRONE_ID, _DRONE_PROFILES["U1B2"])
 DEFAULT_ROLE: str = _PROFILE["role"]
 STRATEGY: str = _PROFILE["strategy"]
 RACE_START_OFFSET_S: float = _PROFILE["race_start_offset_s"]
-HAS_BOOST_MOTOR: bool = bool(_PROFILE["has_boost"])
 
 ROLE_REEVAL_PERIOD_S: float = 5.0
 
@@ -97,18 +95,13 @@ ROLE_REEVAL_PERIOD_S: float = 5.0
 # MATÉRIEL EMBARQUÉ
 # ════════════════════════════════════════════════════════════════════════
 # UART vers Cube Orange+ (port TELEM2 du Cube → /dev/serial0 du Pi)
-# Sur Pi 4B avec dtoverlay=disable-bt, /dev/serial0 → /dev/ttyAMA0
+# Sur Pi 5 (et Pi 4B) avec dtoverlay=disable-bt, /dev/serial0 → /dev/ttyAMA0
 MAVLINK_PORT: str = "/dev/serial0"
 MAVLINK_BAUD: int = 57600
 
 # UART vers ESP32 LoRa V3 (Meshtastic) — branché en USB
 LORA_PORT: str = "/dev/ttyUSB0"
 LORA_BAUD: int = 115200      # auto-géré par Meshtastic, info seulement
-
-# Moteur boost (uniquement sur U1B1 par défaut, modifiable selon montage réel)
-BOOST_RC_CHANNEL: int = 4    # CH4 du Cube Orange+
-BOOST_PWM_OFF: int = 1000    # µs — moteur arrêté
-BOOST_PWM_ON: int = 1900     # µs — moteur plein régime
 
 
 # ════════════════════════════════════════════════════════════════════════
@@ -313,18 +306,28 @@ BUOY_REPULSION_GAIN: float = 20.0
 
 
 # ════════════════════════════════════════════════════════════════════════
-# BASCULE MANUEL ↔ AUTO via CH3
+# BASCULE MANUEL ↔ AUTO via le levier de mode (CH5 récepteur Joysway)
 # ════════════════════════════════════════════════════════════════════════
-# Le levier CH3 de la J4C05 :
-#   CH3 < CH3_THRESHOLD_LOW  → Pi en contrôle (mode AUTO)
-#   CH3 > CH3_THRESHOLD_HIGH → RC en contrôle (mode MANUAL téléopéré)
-#   Entre les deux            → état précédent conservé (hystérésis)
-CH3_THRESHOLD_LOW: int = 1300        # µs
-CH3_THRESHOLD_HIGH: int = 1500       # µs
-CH_RUDDER: int = 1                   # CH1 → safran
-CH_SAIL: int = 2                     # CH2 → voile (winch)
-CH_MODE: int = 3                     # CH3 → bascule mode
-CH_BOOST: int = 4                    # CH4 → boost (déclenchement manuel possible)
+# Avec le setup NouvelEncodeur, le levier 3 positions de la J4C05 sort sur
+# CH5 du récepteur J5C01R, qui est encodé en PPM canal 6 par le Nano. Côté
+# Cube, ArduPilot voit donc ce levier dans `RC_CHANNELS.chan6_raw` :
+#   chan6 < MODE_THRESHOLD_LOW  → Pi en contrôle (mode AUTO)
+#   chan6 > MODE_THRESHOLD_HIGH → RC en contrôle (mode MANUAL téléopéré)
+#   Entre les deux               → état précédent conservé (hystérésis)
+MODE_THRESHOLD_LOW: int = 1300       # µs
+MODE_THRESHOLD_HIGH: int = 1500      # µs
+
+# Mapping des canaux côté MAVLink (RC_CHANNELS / RC_CHANNELS_OVERRIDE).
+# Ces numéros correspondent au PPM en sortie du Nano (cf. RCMAP_* du
+# fichier docs/ardupilot_params.txt et CubeNouvelEncodeur.param).
+CH_RUDDER: int = 4                   # PPM ch4 ← D3 Nano ← CH1 récepteur (gouvernail)
+CH_SAIL: int = 5                     # PPM ch5 ← D4 Nano ← CH2 récepteur (voile)
+CH_MODE: int = 6                     # PPM ch6 ← D7 Nano ← CH5 récepteur (levier mode)
+
+# Aliases rétrocompat — anciens noms encore utilisés en lecture par certains
+# tests/scripts. Ne pas s'en servir dans le code neuf : utiliser MODE_*.
+CH3_THRESHOLD_LOW: int = MODE_THRESHOLD_LOW
+CH3_THRESHOLD_HIGH: int = MODE_THRESHOLD_HIGH
 
 
 # ════════════════════════════════════════════════════════════════════════
@@ -351,26 +354,6 @@ HEADING_PID_OUTPUT_MAX: float = 1.0    # normalisé [-1, 1] → mappé sur PWM
 
 
 # ════════════════════════════════════════════════════════════════════════
-# BOOST — règlement §2c (cf. README2)
-# ════════════════════════════════════════════════════════════════════════
-# Le règlement annonce une SOMME TOTALE de N secondes par course (valeur
-# révisable la veille au briefing). Ce n'est PAS 3 × 30 s : c'est un budget
-# global divisible en plusieurs activations courtes.
-BOOST_MAX_S: float = 30.0          # secondes totales par course (annoncé veille)
-BOOST_ACTIONS_MAX: int = 3         # nb maximum d'activations dans la course
-BOOST_MIN_BURST_S: float = 2.0     # rafale minimum pour éviter les micro-clics
-BOOST_MAX_BURST_S: float = 15.0    # rafale max d'un coup (sécurité matériel)
-BOOST_LOW_BATTERY_PCT: float = 25.0
-# Conditions automatiques d'activation (par ordre de priorité) :
-#   1. Vent < BOOST_TRIGGER_WIND_MS sur segment critique
-#   2. Vitesse < BOOST_TRIGGER_SPEED_MS pendant > BOOST_TRIGGER_LOW_SPEED_S
-BOOST_TRIGGER_WIND_MS: float = 1.5
-BOOST_TRIGGER_SPEED_MS: float = 0.3
-BOOST_TRIGGER_LOW_SPEED_S: float = 15.0
-BOOST_HIGH_SPEED_CUTOFF_MS: float = 1.0   # vitesse à laquelle on coupe le boost
-
-
-# ════════════════════════════════════════════════════════════════════════
 # DÉTECTION BLOCAGE (sans caméra) — cf. README2 §"Détection blocage"
 # ════════════════════════════════════════════════════════════════════════
 # Drone bloqué = 2 conditions sur 3 vraies pendant >STALL_DURATION_S secondes
@@ -382,7 +365,7 @@ STALL_DURATION_S: float = 3.0                # durée minimale pour déclencher
 
 # Réactions par paliers :
 STALL_LIGHT_REACTION_MAX_S: float = 8.0     # 0-8 s : choquer voile + virer
-STALL_MED_REACTION_MAX_S: float = 15.0      # 8-15 s : boost + manœuvre
+STALL_MED_REACTION_MAX_S: float = 15.0      # 8-15 s : manœuvre de dégagement forcée
 # > 15 s : alerte / proposer reprise RC
 
 
@@ -438,13 +421,11 @@ if __name__ == "__main__":
     print("=== StormWings config ===")
     print(f"DRONE_ID            = {DRONE_ID}  (num={DRONE_NUM})")
     print(f"DEFAULT_ROLE        = {DEFAULT_ROLE}  (strategy={STRATEGY})")
-    print(f"HAS_BOOST_MOTOR     = {HAS_BOOST_MOTOR}")
     print(f"RACE_START_OFFSET_S = {RACE_START_OFFSET_S}")
     print(f"MAVLINK_PORT        = {MAVLINK_PORT} @ {MAVLINK_BAUD} baud")
     print(f"LORA_PORT           = {LORA_PORT}")
     print(f"TDMA slot           = {MY_TDMA_OFFSET_MS} ms / {TDMA_FRAME_MS} ms")
     print(f"Capture radius      = RTK {CAPTURE_RADIUS_RTK} m / GPS {CAPTURE_RADIUS_GPS} m")
-    print(f"BOOST_MAX_S         = {BOOST_MAX_S}  (max activations={BOOST_ACTIONS_MAX})")
     print(f"Buoys               = {list(BUOYS_LOCAL.keys())}")
     print(f"Course legs         = {len(COURSE_3_LEGS)}")
     print(f"Penalty legs        = {len(PENALTY_LEGS)}")

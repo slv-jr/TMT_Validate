@@ -25,11 +25,11 @@ Faire courir 3 voiliers RC Joysway Focus V2 (~1 m, ID : `U1B1`, `U1B2`, `U1B3`) 
 │           │ W|dir|spd|ts        │  canal BATTLEBOATS            │
 │           └──── LoRa 868 MHz ──►│  /dev/ttyUSB0                │
 │                                 │       ▼                       │
-│  Télécommande RC                │  Raspberry Pi 4B (10 Hz)     │
+│  Télécommande RC                │  Raspberry Pi 5 (10 Hz)      │
 │  CH1: gouvernail                │       │ MAVLink /dev/serial0  │
 │  CH2: voile      PPM            │       ▼                       │
-│  CH3: AUTO/MAN ────────────────►│  Cube Orange+ ArduRover 4.6.3│
-│  CH4: boost                     │  mode MANUAL permanent        │
+│  CH5: AUTO/MAN ────────────────►│  Cube Orange+ ArduRover 4.6.3│
+│                                 │  mode MANUAL permanent        │
 │                                 │       │                       │
 │                                 │  HERE4 RTK ──► Cube Orange+  │
 │                                 │  (corrections RTCM3 internes) │
@@ -43,7 +43,7 @@ Faire courir 3 voiliers RC Joysway Focus V2 (~1 m, ID : `U1B1`, `U1B2`, `U1B3`) 
 
 | Composant | Modèle | Précision |
 |-----------|--------|-----------|
-| Calculateur | Raspberry Pi 4B | — |
+| Calculateur | Raspberry Pi 5 | — |
 | Pilote auto | Cube Orange+ ArduRover 4.6.3 | — |
 | GNSS | HERE4 RTK | ±2 cm (RTK fix) / ±3 m (GPS seul) |
 | LoRa | ESP32 LoRa V3 + Meshtastic | <500 m LOS |
@@ -141,35 +141,6 @@ def optimal_upwind_angle(wind_speed_ms: float) -> float:
 
 ---
 
-## 🏎️ Boost — Gestion correcte (§2c règlement)
-
-> La **somme totale** des activations = `BOOST_MAX_S` secondes par course (valeur annoncée la veille, défaut 30 s). Ce n'est PAS 3 × 30 s.
-
-```python
-# config.py — à mettre à jour la veille après briefing
-BOOST_MAX_S    = 30   # secondes totales par course
-BOOST_ACTIONS_MAX = 3 # nb max d'activations
-```
-
-**Priorité d'utilisation** (ordre décroissant) :
-1. Vent mort (<1.5 m/s) sur segment critique
-2. Franchissement ligne d'arrivée si écart <30 s avec suivant
-3. Sortie de zone calme (entre F et G, vent perturbé au large)
-
-```python
-# boost_controller.py
-class BoostController:
-    def can_boost(self) -> bool:
-        return (self.total_used_s < config.BOOST_MAX_S and
-                self.activations < config.BOOST_ACTIONS_MAX)
-
-    def reset_for_new_race(self):
-        self.total_used_s = 0.0
-        self.activations = 0
-```
-
----
-
 ## ⚖️ Pénalité — Mode AUTO et MANUEL
 
 ```
@@ -226,7 +197,7 @@ class PenaltyState:
 **Réaction automatique** :
 ```
 Blocage < 8 s   → choquer voile + virer de bord
-Blocage 8-15 s  → boost (si budget) + manœuvre dégagement
+Blocage 8-15 s  → manœuvre de dégagement plus agressive
 Blocage > 15 s  → alerte buzzer + proposer reprise RC
 ```
 
@@ -240,7 +211,7 @@ Blocage > 15 s  → alerte buzzer + proposer reprise RC
 | `RTK_DEGRADED` | RTK perdu, GPS seul | Rayon capture → 7 m |
 | `LORA_LOST` | Pas de trame >10 s | Vent défaut E 4.5 m/s, solo |
 | `WIND_STALE` | Vent >30 s | Idem LORA_LOST |
-| `LOW_BATTERY` | <11.1 V | Désactive boost |
+| `LOW_BATTERY` | <11.1 V | Log warning + reprise RC suggérée |
 | `MAVLINK_LOST` | Pas heartbeat >3 s | Pause + watchdog reset |
 | `STALL_DETECTED` | Blocage >3 s | Manœuvre dégagement auto |
 | `ADVERSARY_SILENT` | Pas de P\| >10 s | Obstacle fixe dernier relevé |
@@ -250,7 +221,6 @@ Blocage > 15 s  → alerte buzzer + proposer reprise RC
 ## 📝 Checklist J-2 → J0
 
 **J-2 (7 mai)**
-- [ ] Mettre à jour `BOOST_MAX_S` après annonce organisateurs
 - [ ] Vérifier canal Meshtastic = `BATTLEBOATS` sur les 3 ESP32
 - [ ] Simulateur parcours N°3 sur les 3 configs
 
@@ -266,7 +236,6 @@ Blocage > 15 s  → alerte buzzer + proposer reprise RC
 - [ ] Briefing 9h30 → coordonnées bouées A B C D E F G Z1 Z2
 - [ ] `tools/buoy_entry.py` → validation + distances → `config.BUOYS_GPS`
 - [ ] Fix RTK établi (fix_type=6) sur les 3 drones
-- [ ] Confirmer `BOOST_MAX_S` si valeur modifiée au briefing
 - [ ] Batteries rechange chargées (3 courses requises)
 - [ ] Attestation RC disponible
 
@@ -279,9 +248,9 @@ Blocage > 15 s  → alerte buzzer + proposer reprise RC
 
 Le README2 est complet. Les points clés intégrés par rapport à l'ancien :
 
-**Nouveau** : exploitation RTK adaptatif (rayon 4 m vs 7 m selon fix), calibration polaire structurée, boost compteur global configurable la veille, pénalité double-mode avec timeout 5 s, détection blocage comportementale, mode `ADVERSARY_SILENT`, rayon de capture adaptatif.
+**Nouveau** : exploitation RTK adaptatif (rayon 4 m vs 7 m selon fix), calibration polaire structurée, pénalité double-mode avec timeout 5 s, détection blocage comportementale, mode `ADVERSARY_SILENT`, rayon de capture adaptatif.
 
-Voulez-vous qu'on attaque maintenant un des modules de code concret — `stall_detector.py`, `penalty_manager.py`, ou `boost_controller.py` corrigé ?
+Voulez-vous qu'on attaque maintenant un des modules de code concret — `stall_detector.py` ou `penalty_manager.py` ?
 
 Oui, les 3 voiliers communiquent entre eux. Voilà comment et pourquoi c'est crucial.
 
@@ -366,19 +335,16 @@ _profiles = {
     'U1B1': {
         'role':          'SCOUT',
         'tdma_slot_ms':  0,        # émet en premier
-        'has_boost':     True,
         'strategy':      'aggressive',   # prend des risques, vitesse brute
     },
     'U1B2': {
         'role':          'OPTIMIZER',
         'tdma_slot_ms':  500,      # émet en deuxième
-        'has_boost':     False,
         'strategy':      'vmg_optimal',  # meilleur VMG, suit les données Scout
     },
     'U1B3': {
         'role':          'SAFETY',
         'tdma_slot_ms':  1000,     # émet en troisième
-        'has_boost':     False,
         'strategy':      'conservative', # minimise les risques
     },
 }
@@ -387,11 +353,10 @@ _profiles = {
 _p = _profiles[DRONE_ID]
 ROLE          = _p['role']
 TDMA_SLOT_MS  = _p['tdma_slot_ms']
-HAS_BOOST     = _p['has_boost']
 STRATEGY      = _p['strategy']
 ```
 
-Tout le reste du code lit `config.ROLE`, `config.HAS_BOOST`, etc. — il n'y a jamais de `if DRONE_ID == 'U1B1'` éparpillé partout dans le code.
+Tout le reste du code lit `config.ROLE`, `config.STRATEGY`, etc. — il n'y a jamais de `if DRONE_ID == 'U1B1'` éparpillé partout dans le code.
 
 ---
 
@@ -410,9 +375,7 @@ Tout le reste du code lit `config.ROLE`, `config.HAS_BOOST`, etc. — il n'y a j
 |-----------|------|------|------|
 | Rôle initial | Scout | Optimizer | Safety |
 | Slot TDMA | 0 ms | 500 ms | 1000 ms |
-| Boost activé | ✅ | ❌ | ❌ |
 | Stratégie tack | Agressive | VMG pur | Conservative |
-| `boost_controller` actif | ✅ | ❌ (no-op) | ❌ (no-op) |
 
 ---
 

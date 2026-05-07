@@ -1,17 +1,19 @@
 """
 Interface MAVLink avec le Cube Orange+ (ArduRover 4.6.3).
 
-Stratégie validée par le PoC SwarmZ :
+Stratégie validée par le PoC SwarmZ + setup officiel "NouvelEncodeur" :
     - Mode permanent MANUAL (le Cube reste en passthrough RC)
-    - Le Pi prend le contrôle en envoyant RC_CHANNELS_OVERRIDE sur CH1
-      (safran) et CH2 (voile), envoi continu à 10 Hz pour éviter le timeout.
-    - SERVO1_FUNCTION = 1 (RCPassThru) — OBLIGATOIRE
-    - SERVO2_FUNCTION = 89 (MainSail)
+    - Le Pi prend le contrôle en envoyant RC_CHANNELS_OVERRIDE sur les
+      canaux RC mappés par le firmware ArduPPM du Nano :
+        chan4 = safran (RCMAP_ROLL=4 → SERVO1=GroundSteering)
+        chan5 = voile  (RCMAP_THROTTLE=5 → SERVO2=MainSail)
+      Envoi continu à 10 Hz pour éviter le timeout d'override (~0.5 s).
     - La bascule manuel/auto se fait par la position physique du levier
-      CH3 sur la radio J4C05, lue via RC_CHANNELS.
+      3 positions sur la radio J4C05 (CH5 du récepteur J5C01R, qui sort en
+      chan6_raw côté Cube via le PPM Nano).
 
-Les paramètres SERVO_FUNCTION=0 du brief initial étaient une erreur :
-0 désactiverait le servo. Voir docs/ARDUPILOT_PARAMS.md.
+Les numéros de canaux sont centralisés dans config.CH_RUDDER / CH_SAIL /
+CH_MODE — ne pas hardcoder ailleurs.
 """
 
 import logging
@@ -83,7 +85,6 @@ class MavlinkInterface:
         # Override actuel à émettre
         self._override_rudder_pwm = IGNORE_PWM
         self._override_sail_pwm = IGNORE_PWM
-        self._override_aux_pwms: dict = {}    # ex: {4: 1900} pour boost
 
     # ──────────────────────────────────────────────
     # Connexion
@@ -286,30 +287,21 @@ class MavlinkInterface:
                   + p / 100.0 * (config.SAIL_PWM_MAX - config.SAIL_PWM_MIN))
         self.set_sail_pwm(pwm)
 
-    def set_aux_pwm(self, channel: int, pwm_us: int):
-        """Définit un canal auxiliaire (ex: CH4 pour le boost)."""
-        self._override_aux_pwms[channel] = pwm_us
-
-    def clear_aux_pwm(self, channel: int):
-        if channel in self._override_aux_pwms:
-            del self._override_aux_pwms[channel]
-
     def push_overrides(self):
         """Envoie effectivement les overrides au Cube. Doit être appelé à
         OVERRIDE_REFRESH_HZ pour éviter le timeout d'override (~0.5s).
 
         Format : RC_CHANNELS_OVERRIDE prend 8 canaux PWM. On passe IGNORE_PWM
-        pour ne pas toucher aux canaux non gérés (ex: CH3 mode reste lu du RC).
+        pour ne pas toucher aux canaux non gérés. Le canal du levier de mode
+        (config.CH_MODE) NE DOIT JAMAIS être overridé — c'est lui qui décide
+        si le Pi pilote ou si la radio reprend la main.
         """
         if self.master is None:
             return
         chans = [IGNORE_PWM] * 8
-        chans[0] = self._override_rudder_pwm   # CH1
-        chans[1] = self._override_sail_pwm     # CH2
-        # CH3 : NE JAMAIS overrider — c'est le levier de mode lu depuis la RC
-        for ch, pwm in self._override_aux_pwms.items():
-            if 1 <= ch <= 8 and ch != 3:
-                chans[ch - 1] = pwm
+        chans[config.CH_RUDDER - 1] = self._override_rudder_pwm
+        chans[config.CH_SAIL - 1]   = self._override_sail_pwm
+        # Canal mode : NE JAMAIS overrider — il est lu depuis la RC physique
         try:
             self.master.mav.rc_channels_override_send(
                 TARGET_SYSID, TARGET_COMP, *chans,
@@ -321,7 +313,6 @@ class MavlinkInterface:
         """Libère tous les overrides → la RC reprend physiquement la main."""
         self._override_rudder_pwm = IGNORE_PWM
         self._override_sail_pwm = IGNORE_PWM
-        self._override_aux_pwms.clear()
         if self.master is None:
             return
         try:

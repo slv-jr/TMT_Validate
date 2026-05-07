@@ -9,7 +9,7 @@ Surveille les pannes possibles et bascule la stratégie en conséquence :
 | RTK_DEGRADED       | RTK perdu, GPS standard           | rayon capture → 7 m               |
 | LORA_LOST          | pas de trame > 10 s               | vent défaut + solo                |
 | WIND_STALE         | vent > WIND_FALLBACK_TIMEOUT_S    | idem LORA_LOST                    |
-| LOW_BATTERY        | < LOW_BATTERY_PCT (ou < 11.1 V)   | désactive boost                   |
+| LOW_BATTERY        | < LOW_BATTERY_PCT (ou < 11.1 V)   | log warning + reprise RC suggérée |
 | MAVLINK_LOST       | pas de heartbeat > 3 s            | pause + watchdog reset            |
 | STALL_DETECTED     | blocage > 3 s                     | manœuvre dégagement auto          |
 | ADVERSARY_SILENT   | pas de P\\| > 10 s pour adversaire | obstacle figé dernier relevé      |

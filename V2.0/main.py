@@ -4,17 +4,18 @@ StormWings — point d'entrée principal (cf. README2).
 Boucle 10 Hz :
     1. Lecture télémétrie (MAVLink) + estimation vent (LoRa Calypso)
     2. Détection mode dégradé (GPS, RTK, LoRa, MAVLink, batterie)
-    3. Bascule MANUEL ↔ AUTO selon CH3
+    3. Bascule MANUEL ↔ AUTO selon le levier 3 positions (config.CH_MODE)
     4. AUTO → décision navigation (priorité décroissante) :
         a) PENALITE active → on suit la séquence Z1/Z2/Z1
         b) STALL détecté   → on déclenche la manœuvre de dégagement
         c) Sinon           → VMG / layline / champ de potentiel / PID
-    5. Push override CH1/CH2 (et CH4 boost) en continu à 10 Hz
+    5. Push override safran/voile en continu à 10 Hz
+       sur les canaux MAVLink config.CH_RUDDER / CH_SAIL.
     6. Comm LoRa : broadcast P|... selon le slot TDMA (60 s décalés)
     7. Logging CSV horodaté
 
 Lancement :
-    DRONE_ID=U1B1 python3 main.py        # drone Scout (avec boost)
+    DRONE_ID=U1B1 python3 main.py        # drone Scout
     DRONE_ID=U1B2 python3 main.py        # drone Optimizer
     DRONE_ID=U1B3 python3 main.py        # drone Safety
 """
@@ -33,7 +34,6 @@ from typing import Dict, Optional, Tuple
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 
 import config
-from boost.boost_controller import BoostController, BoostState
 from comms.lora_iface import LoRaInterface
 from comms.mavlink_iface import MavlinkInterface
 from navigation import geo_utils, layline, polar, potential_field, vmg
@@ -92,7 +92,6 @@ class StormWingsApp:
         self.roles = RoleManager()
         self.tdma = TDMAScheduler()
         self.degraded = DegradedManager()
-        self.boost = BoostController(self.mav)
         self.flight_log = FlightLogger()
         self.penalty = PenaltyManager()
         self.stall = StallDetector()
@@ -115,13 +114,10 @@ class StormWingsApp:
     def setup(self) -> bool:
         self.log.info("=" * 60)
         self.log.info("StormWings %s — démarrage", config.DRONE_ID)
-        self.log.info("Rôle %s | Strategy %s | Boost %s",
-                      config.DEFAULT_ROLE, config.STRATEGY,
-                      config.HAS_BOOST_MOTOR)
-        self.log.info("RTK radius=%.1f m / GPS radius=%.1f m | "
-                      "BOOST_MAX=%.0fs/%d actions",
-                      config.CAPTURE_RADIUS_RTK, config.CAPTURE_RADIUS_GPS,
-                      config.BOOST_MAX_S, config.BOOST_ACTIONS_MAX)
+        self.log.info("Rôle %s | Strategy %s",
+                      config.DEFAULT_ROLE, config.STRATEGY)
+        self.log.info("RTK radius=%.1f m / GPS radius=%.1f m",
+                      config.CAPTURE_RADIUS_RTK, config.CAPTURE_RADIUS_GPS)
         self.log.info("=" * 60)
 
         # MAVLink (obligatoire)
@@ -469,24 +465,6 @@ class StormWingsApp:
         self._last_sail_pct = sail_pct
         self.mav.set_sail_percent(sail_pct)
 
-        # ── Boost auto ──
-        role_mods = self.roles.role_modifies_strategy()
-        in_dead = polar.is_dead_zone(
-            geo_utils.angle_diff_deg(target_heading, wind_est.direction_deg)
-        )
-        self.boost.update(
-            boat_speed_ms=tlm.ground_speed_ms,
-            wind_speed_ms=wind_est.speed_ms,
-            battery_pct=tlm.battery_remaining_pct,
-        )
-        self.boost.auto_check(
-            boat_speed_ms=tlm.ground_speed_ms,
-            wind_speed_ms=wind_est.speed_ms,
-            battery_pct=tlm.battery_remaining_pct,
-            in_dead_zone=in_dead,
-            role_authorizes=role_mods["use_boost_authorized"],
-        )
-
     def _handle_stall(self, stall_status, plan, boat_pos, tlm, wind_est,
                       now: float):
         """Réaction palier par palier (cf. README2 §"Détection blocage")."""
@@ -508,19 +486,6 @@ class StormWingsApp:
         # Voile choquée à fond (recherche de poussée même mauvaise)
         self.mav.set_sail_percent(80.0)
         self._last_sail_pct = 80.0
-
-        # Escalade : niveau MEDIUM = boost si dispo et autorisé
-        if level == StallLevel.MEDIUM:
-            role_mods = self.roles.role_modifies_strategy()
-            if (self.boost.has_boost
-                    and role_mods["use_boost_authorized"]
-                    and self.boost.can_boost()):
-                self.boost.request_boost(
-                    boat_speed_ms=tlm.ground_speed_ms,
-                    wind_speed_ms=wind_est.speed_ms,
-                    battery_pct=tlm.battery_remaining_pct,
-                    reason="stall-medium",
-                )
 
         if level == StallLevel.HARD:
             # Le drone est vraiment coincé — log warning seulement
@@ -663,15 +628,6 @@ class StormWingsApp:
                 "wind_age_s": wind_est.age_s,
                 "wind_source": wind_est.source,
                 "battery_pct": tlm.battery_remaining_pct,
-                "boost_state": self.boost.state.value,
-                "boost_seconds_used": (
-                    self.boost.update(
-                        boat_speed_ms=tlm.ground_speed_ms,
-                        wind_speed_ms=wind_est.speed_ms,
-                        battery_pct=tlm.battery_remaining_pct,
-                    ).seconds_used
-                ),
-                "boost_actions_used": self.boost._activations_used,
                 "penalty_mode": self.penalty.mode.value,
                 "penalty_progress": self.penalty.progress_str(),
                 "neighbors_count": len(

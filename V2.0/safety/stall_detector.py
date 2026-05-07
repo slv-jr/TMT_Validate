@@ -12,12 +12,12 @@ plus de `STALL_DURATION_S` secondes :
 L'escalade des réactions est temporelle :
 
     - 0 - 8 s   → niveau LIGHT  : choquer la voile + virer de bord
-    - 8 - 15 s  → niveau MEDIUM : boost (si budget) + manœuvre dégagement
+    - 8 - 15 s  → niveau MEDIUM : manœuvre de dégagement plus agressive
     - > 15 s    → niveau HARD   : alerte buzzer / proposer reprise RC
 
 Ce module ne fait pas l'action : il EXPOSE l'état (`StallStatus`) et c'est
-`main.py` qui décide de la réaction, en s'appuyant sur le boost_controller,
-le mode_switch et la state_machine.
+`main.py` qui décide de la réaction, en s'appuyant sur le mode_switch et la
+state_machine.
 """
 
 from __future__ import annotations
@@ -37,7 +37,7 @@ log = logging.getLogger(__name__)
 class StallLevel(Enum):
     NONE = "NONE"
     LIGHT = "LIGHT"     # 0-8 s : voile + virement
-    MEDIUM = "MEDIUM"   # 8-15 s : boost + dégagement
+    MEDIUM = "MEDIUM"   # 8-15 s : manœuvre de dégagement forcée
     HARD = "HARD"       # > 15 s : alerte / RC
 
 

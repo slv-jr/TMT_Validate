@@ -1,6 +1,8 @@
 # Câblage StormWings — Schéma détaillé
 
-> Ce document est la **référence visuelle** du câblage des 3 drones UTT pour le Challenge SWARMz BattleBoats 2026. Source de vérité : le PoC SwarmZ officiel + les ajouts spécifiques StormWings (CH4 boost sur U1B1, ESP32 LoRa V3 USB).
+> Ce document est la **référence visuelle** du câblage des 3 drones UTT pour le Challenge SWARMz BattleBoats 2026. Source de vérité : le setup officiel **NouvelEncodeur** des organisateurs (Joysway J5C01R → Arduino Nano ArduPPM v2.3.16 → Cube Orange+) + l'ajout StormWings d'un ESP32 LoRa V3 sur USB.
+>
+> Référence complète des organisateurs : `SwarmZ_fichier_Orga/NouvelEncodeur/cablage_ppm_battleboats.html`.
 
 ---
 
@@ -29,8 +31,9 @@
 │                              └──────────┘                            │
 │                                                                      │
 │     ┌──────────┐  PWM    ┌────────┐  PPM    ┌──────────┐            │
-│     │ J5C01R   ├────────►│ BCUBE  ├────────►│ Cube RC  │            │
-│     │ Récept.  │ ch1-4   │ Encod. │         │   IN     │            │
+│     │ J5C01R   ├────────►│ Arduino├────────►│ Cube RC  │            │
+│     │ Récept.  │ CH1/2/5 │ Nano   │  D10    │   IN     │            │
+│     │ 5 canaux │         │ ArduPPM│         │          │            │
 │     └──────────┘         └────────┘         └──────────┘            │
 │                                                                      │
 │     ┌──────────┐  CAN    ┌──────────┐                                │
@@ -49,7 +52,7 @@
 │     └──────────┘               │                                     │
 │                                ▼                                     │
 │     ┌──────────────────────────────┐                                 │
-│     │      Raspberry Pi 4B         │                                 │
+│     │      Raspberry Pi 5          │                                 │
 │     │      (cerveau StormWings)    │                                 │
 │     └──────────────────────────────┘                                 │
 │                                                                      │
@@ -60,10 +63,6 @@
 │     ┌──────────┐  PWM             ┌──────────┐                       │
 │     │ Cube     ├─────────────────►│ Servo    │ Voile                 │
 │     │ MAIN OUT2│                  │ winch    │                       │
-│     └──────────┘                  └──────────┘                       │
-│     ┌──────────┐  PWM             ┌──────────┐                       │
-│     │ Cube     ├─────────────────►│ Moteur   │ Boost (U1B1 only)     │
-│     │ MAIN OUT4│                  │ ESC      │                       │
 │     └──────────┘                  └──────────┘                       │
 └─────────────────────────────────────────────────────────────────────┘
 ```
@@ -91,38 +90,67 @@
 
 ---
 
-## B — Récepteur Joysway J5C01R → Encodeur BCUBE
+## B — Récepteur Joysway J5C01R → Arduino Nano (ArduPPM)
 
-Le récepteur sort des **PWM individuels** par canal. Le port RCIN du Cube attend du **PPM**. L'encodeur BCUBE fait la traduction.
+Le récepteur sort 5 PWM individuels (CH1 à CH5). Seuls **CH1, CH2 et CH5** sont utilisés dans le setup officiel BattleBoats — CH3 et CH4 sont **volontairement laissés vides**. L'Arduino Nano flashé ArduPPM v2.3.16 convertit ces PWM en un flux PPM combiné pour le Cube.
 
-### Branchements signal seul (les fils rouges/noirs côté récepteur ne sont **pas** tirés vers l'encodeur)
+### Branchements signal seul
 
-| J5C01R port | Couleur fil  | BCUBE entrée | Canal | Usage                  |
-|-------------|--------------|--------------|-------|------------------------|
-| **1**       | 3 fils       | IN1          | CH1   | Stick safran           |
-| **2**       | 🟠 Orange    | IN2          | CH2   | Stick voile            |
-| **3**       | 🟡 Jaune     | IN3          | CH3   | **Levier mode AUTO/MAN** |
-| **4**       | 🟢 Vert      | IN4          | CH4   | Boost (U1B1 seulement) |
-| **5**       | (batterie)   | (non utilisé)| —     | Alim récepteur         |
+| J5C01R port | Couleur fil | Nano pin | PPM canal côté Cube | Usage |
+|-------------|-------------|----------|---------------------|-------|
+| **CH1**     | 3 fils      | **D3**   | chan4 (RCMAP_ROLL=4)     | Stick safran (gouvernail) |
+| **CH2**     | 🟠 Orange   | **D4**   | chan5 (RCMAP_THROTTLE=5) | Stick voile (winch)       |
+| CH3         | —           | —        | —                        | **Non utilisé**           |
+| CH4         | —           | —        | —                        | **Non utilisé**           |
+| **CH5**     | 🟡 Jaune    | **D7**   | chan6 (MODE_CH=6)        | **Levier mode AUTO/MAN**  |
+| GND         | Noir        | GND      | —                        | Masse commune             |
+| (alim)      | (batterie)  | —        | —                        | Alim récepteur (par BEC)  |
 
-> ⚠️ Sur **U1B2** et **U1B3**, on **n'utilise pas CH4** (pas de boost). Câbler quand même pour pouvoir échanger les drones en cas de panne.
+> ⚠️ Le **levier de mode est sur CH5** du récepteur — pas CH3. Bien identifier physiquement le canal correspondant au levier 3 positions sur ta J4C05 avant de souder.
 
-### Cavalier d'alimentation BCUBE
+### Pull-ups obligatoires sur le Nano
 
-**LAISSER NON SOUDÉ** — c'est la configuration par défaut. L'encodeur sera alimenté par le Cube via le port RCIN.
+Le firmware ArduPPM scrute les inputs avec interruptions. Les pins inutilisées **doivent** être tirées au +5V pour éviter les fausses interruptions :
+
+| Pin Nano | À relier à |
+|----------|------------|
+| RX0      | +5V        |
+| TX1      | +5V        |
+| D2       | +5V        |
+
+> Sans ces pull-ups, des fausses interruptions parasites font sauter les servos de manière erratique.
 
 ---
 
-## C — Encodeur BCUBE → Cube Orange+ RC IN
+## C — Arduino Nano → Cube Orange+ RC IN
 
-Câble 3 fils depuis la prise 4 pins de l'encodeur :
+Câble 3 fils du Nano vers le port RCIN du Cube :
 
-| BCUBE prise 4 pins | Cube RC IN | Couleur     |
-|--------------------|------------|-------------|
-| GND                | GND        | Noir        |
-| PPM (signal)       | Signal     | Blanc/Orange|
-| +5V                | +5V        | Rouge       |
-| MUX                | **NON connecté** | — (pas utilisé) |
+| Nano                | Cube RC IN (JST-GH 3 pins) | Couleur recommandée |
+|---------------------|----------------------------|---------------------|
+| **D10 (OC1B)**      | Pin 1 · **Signal**         | Blanc / vert        |
+| GND                 | Pin 3 · **GND**            | Noir                |
+| **+5V (entrée)**    | Pin 2 · **+5V**            | Rouge               |
+
+> Le Nano est **alimenté par le Cube** (via la pin 2 du RCIN, et non par le BEC servo). Cela évite les brownouts du Nano lors des appels de courant des servos.
+
+> ⚠️ **Polarité RCIN sur Cube Orange+** : la masse est sur la rangée du **haut** (inverse de la convention habituelle). Vérifier l'orientation du connecteur JST-GH 3 pins.
+
+### Flash et configuration du Nano (à faire UNE fois avant câblage)
+
+Voir `SwarmZ_fichier_Orga/NouvelEncodeur/cablage_ppm_battleboats.html` §04 :
+- Firmware : `ArduPPM_v2.3.16_ATMega328p_for_ArduPlane.hex`
+- Source : https://download.ardupilot.org/downloads/wiki/advanced_user_tools/
+- Outil : `avrdude` (inclus dans Arduino IDE 2.x)
+- Baud rate : **115200** (clones CH340)
+- Commande type :
+
+```bash
+avrdude -p atmega328p -c arduino -P COM15 -b 115200 \
+  -U flash:w:"ArduPPM_v2.3.16_ATMega328p_for_ArduPlane.hex":i
+```
+
+Une fois flashé, débrancher l'USB du Nano (il ne sert plus, le Nano est alimenté par le Cube).
 
 ---
 
@@ -170,17 +198,16 @@ Cube TELEM2 JST-GH (6 pins, vue de face)
 
 ### Affectation des sorties
 
-| MAIN OUT | Servo / Composant      | SERVO_FUNCTION | PWM neutre | Drones concernés |
-|----------|------------------------|----------------|------------|------------------|
-| OUT 1    | Safran (gouvernail)    | **1 (RCPassThru)** | 1500 µs | U1B1, U1B2, U1B3 |
-| OUT 2    | Voile (winch)          | 89 (MainSail)  | 1500 µs    | U1B1, U1B2, U1B3 |
-| OUT 3    | (libre)                | 0              | —          | —                |
-| OUT 4    | Moteur boost (ESC)     | 1 (RCPassThru) | 1000 µs    | **U1B1 seul**    |
-| OUT 5    | (BEC 5V — alim rail)   | —              | —          | tous (alim seule)|
+| MAIN OUT | Servo / Composant      | SERVO_FUNCTION       | Source PWM      | PWM neutre | Drones concernés |
+|----------|------------------------|----------------------|-----------------|------------|------------------|
+| OUT 1    | Safran (gouvernail)    | **26 (GroundSteering)** | RCMAP_ROLL=chan4 | 1500 µs   | U1B1, U1B2, U1B3 |
+| OUT 2    | Voile (winch)          | 89 (MainSail)        | RCMAP_THROTTLE=chan5 | 1500 µs | U1B1, U1B2, U1B3 |
+| OUT 3    | (libre)                | 0                    | —               | —          | —                |
+| OUT 4    | (libre)                | 0                    | —               | —          | —                |
+| OUT 5    | (BEC 5V — alim rail)   | —                    | —               | —          | tous (alim seule)|
 
-> 🔴 **SERVO1_FUNCTION = 1 (RCPassThru) est OBLIGATOIRE.**
-> Avec FUNCTION=0, le servo est désactivé.
-> Avec FUNCTION=26 (GroundSteering), ArduPilot recalcule en permanence et écrase les overrides du Pi → le drone ne suit plus la consigne du Pi.
+> 🔴 **Pourquoi GroundSteering (26) et pas RCPassThru (1) ?**
+> Avec le PPM Nano, le safran arrive sur **chan4**, pas chan1. RCPassThru (function 1) lit chan1 qui est saturé par les pull-ups du Nano. GroundSteering (function 26) lit `RCMAP_ROLL` (= chan4 dans notre setup) et passe en passthrough proportionnel en mode MANUAL — c'est exactement ce qu'on veut.
 
 ---
 
@@ -218,13 +245,14 @@ Si le port n'est pas `/dev/ttyUSB0`, mettre à jour `LORA_PORT` dans `config.py`
 
 ## H — Récapitulatif des points critiques
 
-### 5 erreurs qui font perdre 2 heures
+### 6 erreurs qui font perdre 2 heures
 
-1. ⚡ **GND non commun** entre BEC, récepteur et Cube → comportement erratique. Dérouler du fil noir entre tous les blocs.
-2. 🔌 **Rail MAIN OUT non alimenté** par le BEC → les servos ne bougent pas. Brancher OUT 5.
+1. ⚡ **GND non commun** entre BEC, récepteur, Nano et Cube → comportement erratique. Dérouler du fil noir entre tous les blocs.
+2. 🔌 **Rail MAIN OUT non alimenté** par le BEC → les servos ne bougent pas. Brancher le BEC sur OUT 5.
 3. 🔄 **Connecteurs servo non retournés** sur Cube Orange Plus → +5V sur la broche signal → servo cramé. Toujours vérifier au multimètre.
-4. 🔁 **TX-RX pas croisés** entre Cube et Pi → pas de heartbeat. Inverser.
-5. ❌ **Cavalier d'alim soudé** sur l'encodeur BCUBE → l'encodeur attend une alim externe qui n'est pas branchée. Laisser non soudé.
+4. 🔁 **TX-RX pas croisés** entre Cube TELEM2 et Pi GPIO → pas de heartbeat MAVLink. Inverser.
+5. ⚠️ **Pull-ups manquants** sur RX0/TX1/D2 du Nano → fausses interruptions, servos qui sautent. Tirer ces 3 pins au +5V.
+6. ❌ **Levier mode câblé sur D5 ou D6** au lieu de D7 → côté Cube, le canal mode arrivera en chan4 ou chan5 au lieu de chan6, et la lecture côté Pi (`config.CH_MODE = 6`) restera à 0. Bien câbler **CH5 récepteur → D7 Nano**.
 
 ### Vérifications au multimètre AVANT d'allumer
 
@@ -251,8 +279,8 @@ Si le port n'est pas `/dev/ttyUSB0`, mettre à jour `LORA_PORT` dans `config.py`
                        ...
 ```
 
-Sur Pi 4B, les pins 6, 8 et 10 sont sur le coin haut-gauche du connecteur 40 broches (côté carte SD).
+Sur Pi 5, les pins 6, 8 et 10 sont sur le coin haut-gauche du connecteur 40 broches (côté carte SD) — pinout 40 broches identique au Pi 4B.
 
 ---
 
-*StormWings v2.0 — Câblage · Mai 2026 · Source : PoC SwarmZ Full + ajouts UTT*
+*StormWings v2.0 — Câblage · Mai 2026 · Source : SwarmZ NouvelEncodeur (officiel) + ajouts UTT*

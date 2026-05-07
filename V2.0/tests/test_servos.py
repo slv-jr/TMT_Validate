@@ -3,10 +3,12 @@ Test 2 : sweep des servos.
 
 ⚠️ Ce test ENVOIE des commandes au safran et à la voile.
 Le bateau doit être HORS DE L'EAU et sur ses BERS, ou maintenu manuellement.
-Le levier CH3 doit être en position BAS (mode AUTO) pour que le Pi prenne la main.
+Le levier 3 positions de la J4C05 doit être en position BAS (mode AUTO)
+pour que le Pi prenne la main. Côté MAVLink, ce levier est lu sur
+config.CH_MODE (par défaut chan6_raw avec le setup NouvelEncodeur).
 
 Séquence :
-    1. Vérifie qu'on est en mode AUTO (CH3 < 1300 µs)
+    1. Vérifie qu'on est en mode AUTO (chan_mode < MODE_THRESHOLD_LOW)
     2. Centre le safran (1500 µs) pendant 2 s
     3. Safran à GAUCHE (1200 µs) pendant 2 s
     4. Safran au CENTRE pendant 2 s
@@ -69,21 +71,25 @@ def main():
         log.error("Pas de connexion MAVLink")
         return 1
 
-    # Vérification mode CH3
-    log.info("Vérification du mode RC/Auto (CH3)…")
+    # Vérification mode (chan_mode = config.CH_MODE)
+    log.info("Vérification du mode RC/Auto (chan%d_raw)…", config.CH_MODE)
     time.sleep(2.0)   # laisser le temps au stream RC d'arriver
     tlm = mav.get_telemetry()
-    ch3 = tlm.rc_channels.get(3, 0)
-    log.info("CH3 = %d µs", ch3)
-    if ch3 == 0:
-        log.error("CH3 jamais reçu — vérifier l'émetteur RC")
+    ch_mode = tlm.rc_channels.get(config.CH_MODE, 0)
+    log.info("chan%d (levier mode) = %d µs", config.CH_MODE, ch_mode)
+    if ch_mode == 0:
+        log.error(
+            "Levier mode jamais reçu (chan%d=0) — vérifier émetteur RC "
+            "allumé, récepteur J5C01R alimenté, encodeur Nano branché.",
+            config.CH_MODE,
+        )
         mav.close()
         return 1
-    if ch3 > config.CH3_THRESHOLD_LOW:
+    if ch_mode > config.MODE_THRESHOLD_LOW:
         log.error(
-            "CH3 = %d µs > %d µs (mode RC actif). "
-            "Bascule le levier CH3 en BAS pour passer en AUTO.",
-            ch3, config.CH3_THRESHOLD_LOW,
+            "chan%d = %d µs > %d µs (mode RC actif). "
+            "Bascule le levier 3 positions en BAS pour passer en AUTO.",
+            config.CH_MODE, ch_mode, config.MODE_THRESHOLD_LOW,
         )
         mav.close()
         return 1
