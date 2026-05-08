@@ -167,12 +167,12 @@ def buoy_gps(buoy_name: str) -> GPSPos:
     return config.BUOYS_GPS[buoy_name]
 
 
-def gate_endpoints_gps(gate_name: str = "AB") -> Tuple[GPSPos, GPSPos]:
-    """Coordonnées GPS des deux bouées d'une porte (ex: 'AB', '12', '34').
+def gate_endpoints_gps(gate_name: str = "12") -> Tuple[GPSPos, GPSPos]:
+    """Coordonnées GPS des deux bouées d'une porte (ex: '12', '34').
 
     Args:
         gate_name: nom de la porte (2 caractères, chacun une bouée valide).
-                   Défaut "AB" (porte départ/arrivée du parcours côtier).
+                   Défaut "12" (porte départ/arrivée commune aux 2 parcours).
     """
     a_name, b_name = gate_name[0], gate_name[1]
     return config.BUOYS_GPS[a_name], config.BUOYS_GPS[b_name]

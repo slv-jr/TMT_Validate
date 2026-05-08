@@ -1,11 +1,14 @@
 """
-Saisie des coordonnées GPS officielles des bouées (matin J0 — 9 mai).
+Saisie des coordonnées GPS officielles des bouées (matin J0 — 9 mai 2026).
 
 L'outil adapte automatiquement la liste des bouées au parcours actif
 (config.COURSE_NUMBER) :
 
-    Parcours 1 (banane)      : 1, 2, 3, 4, P1, P2  (6 bouées)
-    Parcours 2 (côtier court): A, B, C, D, E, Z1, Z2  (7 bouées)
+    Parcours 1 (banane)   : 1, 2, 3, 4, P1, P2          (6 bouées)
+    Parcours 2 (5 bouées) : 1, 2, 3, 4, 5, P1, P2       (7 bouées)
+
+Les bouées 1, 2, 3, 4 et P1/P2 sont COMMUNES aux 2 parcours. Seule la
+bouée 5 est exclusive au parcours 2.
 
 Cet outil :
     1) Affiche les bouées attendues une par une.
@@ -17,10 +20,10 @@ Cet outil :
        /etc/stormwings/buoys_today.json) qui sera lu au démarrage du service.
 
 Usage :
-    COURSE_NUMBER=2 python3 -m tools.buoy_entry         # parcours côtier court
+    COURSE_NUMBER=2 python3 -m tools.buoy_entry         # parcours 5 bouées
     COURSE_NUMBER=1 python3 -m tools.buoy_entry         # parcours banane
     BUOYS_OVERRIDE_PATH=/tmp/test.json python3 -m tools.buoy_entry
-    python3 -m tools.buoy_entry --all                   # saisir toutes (1+2)
+    python3 -m tools.buoy_entry --all                   # saisir toutes
 """
 
 from __future__ import annotations
@@ -46,14 +49,14 @@ log = logging.getLogger("buoy_entry")
 
 
 # Liste exhaustive des bouées possibles sur les 2 parcours retenus
-ALL_BUOYS = ["1", "2", "3", "4", "P1", "P2",          # parcours banane
-             "A", "B", "C", "D", "E", "Z1", "Z2"]     # parcours côtier court
+# (briefing officiel du 8/5/2026 — toutes communes sauf la bouée 5).
+ALL_BUOYS = ["1", "2", "3", "4", "5", "P1", "P2"]
 
 
 def expected_buoys_for_course(course_num: int, all_buoys: bool = False):
     """Retourne la liste des bouées à saisir pour le parcours.
 
-    Si `all_buoys=True`, retourne toutes les bouées des 2 parcours retenus.
+    Si `all_buoys=True`, retourne TOUTES les bouées (1-5 + P1/P2).
     """
     if all_buoys:
         return list(ALL_BUOYS)
@@ -153,9 +156,9 @@ def display_summary(buoys: Dict[str, Tuple[float, float]],
     print("\nDistances entre bouées (m) :")
     pairs_banane = [("1", "2"), ("3", "4"), ("1", "3"), ("2", "4"),
                     ("P1", "P2"), ("2", "P1")]
-    pairs_cotier = [("A", "B"), ("A", "C"), ("C", "D"), ("D", "E"),
-                    ("E", "C"), ("Z1", "Z2")]
-    pairs = pairs_banane if config.COURSE_NUMBER == 1 else pairs_cotier
+    pairs_5buoys = [("1", "2"), ("1", "5"), ("5", "4"), ("4", "3"),
+                    ("3", "1"), ("P1", "P2"), ("2", "P1")]
+    pairs = pairs_banane if config.COURSE_NUMBER == 1 else pairs_5buoys
     for a, b in pairs:
         if a in buoys and b in buoys:
             d = geo_utils.distance_m(buoys[a], buoys[b])
@@ -179,7 +182,7 @@ def main():
     )
     parser.add_argument(
         "--course", type=int, default=config.COURSE_NUMBER, choices=[1, 2],
-        help="Numéro de parcours (1 banane ou 2 côtier court).",
+        help="Numéro de parcours (1 banane ou 2 '5 bouées').",
     )
     args = parser.parse_args()
 

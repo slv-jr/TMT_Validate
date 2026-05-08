@@ -2,7 +2,7 @@
 
 > **Objectif** : t'amener du carton ouvert le J-7 à la course du 9 mai dans l'ordre **exact** des opérations, avec les commandes à copier-coller. Chaque section indique sur quelle machine tu travailles : `[PC]`, `[Pi]` ou `[Mission Planner]`.
 
-À répéter pour chaque drone (U1B1, U1B2 — régate à **2 drones**) — la seule chose qui change au lancement est `DRONE_ID`. Le code supporte 2 parcours (`COURSE_NUMBER=1` banane / `=2` côtier court) et 2 modes opératoires (`STORMWINGS_MODE=ESSAI/REGATE`) sélectionnés via variables d'environnement.
+À répéter pour chaque drone (U1B1, U1B2 — régate à **2 drones**) — la seule chose qui change au lancement est `DRONE_ID`. Le code supporte 2 parcours (`COURSE_NUMBER=1` banane 4 bouées / `=2` parcours "5 bouées" du briefing 8/5) et 2 modes opératoires (`STORMWINGS_MODE=ESSAI/REGATE`) sélectionnés via variables d'environnement.
 
 ---
 
@@ -501,11 +501,11 @@ app.run()
 
 Le drone doit aller automatiquement faire le tour de pénalité :
 - Parcours 1 (banane) : P1 → P2 bâbord → P1 bâbord
-- Parcours 2 (côtier court) : Z1 → Z2 bâbord → Z1 bâbord
+- Parcours 2 ("5 bouées") : P1 → P2 bâbord → P1 bâbord (commune au parcours 1)
 
 À tester pour les 2 types de parcours.
 
-✅ **Phase 6 terminée** : les 2 drones naviguent en autonomie, polaire calibrée, pénalité validée pour banane ET côtier, loiter pré-départ OK. **Tu es prêt pour le 9 mai**.
+✅ **Phase 6 terminée** : les 2 drones naviguent en autonomie, polaire calibrée, pénalité P1/P2 validée, loiter pré-départ OK. **Tu es prêt pour le 9 mai**.
 
 ---
 
@@ -517,7 +517,7 @@ Récupérer :
 1. Le **numéro du parcours** retenu pour la course (1 ou 2) → définit `COURSE_NUMBER`
 2. Les **coordonnées GPS officielles** des bouées (format probable : décimal ou DMS) :
    - Parcours 1 : 1, 2, 3, 4, P1, P2 (6 bouées)
-   - Parcours 2 : A, B, C, D, E, Z1, Z2 (7 bouées)
+   - Parcours 2 ("5 bouées") : 1, 2, 3, 4, 5, P1, P2 (7 bouées — P1/P2 communes avec parcours 1)
 3. La **prévision météo** pour régler `WIND_FALLBACK_DIR_DEG` / `WIND_FALLBACK_SPEED_MS`
 
 ### 7.2. Saisie des bouées sur les 2 Pi

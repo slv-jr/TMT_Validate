@@ -26,12 +26,15 @@
 ## 🌅 Briefing matin (9h00 → 10h00)
 
 ```
-[ ] Identifier le PARCOURS du jour (1 banane / 2 côtier court)
+[ ] Identifier le PARCOURS du jour (1 banane / 2 "5 bouées")
         ─► sera utilisé pour COURSE_NUMBER=__ au lancement
 
-[ ] Récupérer GPS officiels selon le parcours :
+[ ] Récupérer GPS officiels selon le parcours (briefing 8/5/2026 J-1) :
     • Parcours 1 : 1, 2, 3, 4, P1, P2 (6 bouées)
-    • Parcours 2 : A, B, C, D, E, Z1, Z2 (7 bouées)
+    • Parcours 2 : 1, 2, 3, 4, 5, P1, P2 (7 bouées — partage 1-4 + P1/P2 avec
+                  le parcours 1, ajoute la bouée 5 au nord)
+    Si l'orga annonce une CORRECTION de coords au briefing matin :
+        sudo COURSE_NUMBER=<n> python3 -m tools.buoy_entry
 
 [ ] Confirmer sens du parcours (tribord ou bâbord amure au départ ?)
 [ ] Récupérer prévision vent pour régler WIND_FALLBACK_DIR/SPD
@@ -151,7 +154,7 @@ T+30s    [ ] U1B2 quitte le loiter et fonce vers la porte
 3. Repositionner le drone sur la trajectoire
 4. Faire le tour de pénalité À LA RADIO :
    • Parcours 1 : porte 2-P1 → enrouler P2 BÂBORD → enrouler P1 BÂBORD
-   • Parcours 2 : porte A-Z1 → enrouler Z2 BÂBORD → enrouler Z1 BÂBORD
+   • Parcours 2 : idem parcours 1 (séquence P1/P2 commune depuis briefing 8/5)
 5. Limite : 30s max RC (au-delà l'auto reprend)
 6. Levier mode BAS → drone reprend le parcours à l'étape COURANTE
 ```
@@ -241,7 +244,7 @@ Coéquipier 2      ____________________
 ## 🔧 Commandes de lancement les plus courantes
 
 ```bash
-# Course officielle parcours 2 (côtier court) — Scout
+# Course officielle parcours 2 ("5 bouées") — Scout
 DRONE_ID=U1B1 STORMWINGS_MODE=REGATE COURSE_NUMBER=2 python3 main.py
 
 # Course officielle parcours 2 — Optimizer
@@ -265,4 +268,4 @@ python3 -m tools.buoy_entry --all
 
 > 🍀 **BONNE COURSE — UTT — Challenge SWARMz BattleBoats 2026**
 
-*StormWings v2.0 · Édition course du 9 mai 2026 · Régate à 2 drones · 2 parcours (1 banane, 2 côtier court)*
+*StormWings v2.0 · Édition course du 9 mai 2026 · Régate à 2 drones · 2 parcours (1 banane, 2 "5 bouées" briefing 8/5)*

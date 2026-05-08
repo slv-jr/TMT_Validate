@@ -2,7 +2,7 @@
 
 > Système de navigation autonome multi-drones voiliers pour le **Challenge SWARMz BattleBoats** organisé à Toulon les **9-10 mai 2026** par l'équipe UTT (Université de Technologie de Troyes).
 
-**2 voiliers RC Joysway Focus V2** (~1 m, IDs `U1B1` Scout et `U1B2` Optimizer ; `U1B3` optionnel) en pilotage autonome coopératif. Le code supporte les **2 parcours officiels** retenus (1 banane et 2 côtier court) sélectionnables au lancement, et **2 modes opératoires** (ESSAI pour les tests, RÉGATE pour la course officielle). La station-sol diffuse le vent réel par LoRa toutes les 60 s. Les 2 drones se coordonnent en TDMA et s'échangent leurs positions GPS. Un opérateur reprend la main via le levier 3 positions de la J4C05 à tout moment.
+**2 voiliers RC Joysway Focus V2** (~1 m, IDs `U1B1` Scout et `U1B2` Optimizer ; `U1B3` optionnel) en pilotage autonome coopératif. Le code supporte les **2 parcours officiels** du briefing du 8/5/2026 (1 banane à 4 bouées, 2 "5 bouées" avec ajout d'une bouée nord) sélectionnables au lancement, et **2 modes opératoires** (ESSAI pour les tests, RÉGATE pour la course officielle). La station-sol diffuse le vent réel par LoRa toutes les 60 s. Les 2 drones se coordonnent en TDMA et s'échangent leurs positions GPS. Un opérateur reprend la main via le levier 3 positions de la J4C05 à tout moment.
 
 ---
 
@@ -81,7 +81,7 @@ V2.0/
 │   │                             #     STALL_DETECTED, ADVERSARY_SILENT
 │   ├── stall_detector.py         #   détection blocage (2/3 conditions, palier)
 │   ├── penalty_manager.py        #   séquence pénalité dynamique
-│   │                             #     P1/P2 (parcours 1) ou Z1/Z2 (parcours 2)
+│   │                             #     P1/P2 (commun aux 2 parcours, briefing 8/5)
 │   └── logger.py                 #   logger CSV (~32 colonnes incl. mode + course_n)
 │
 ├── comms/
@@ -192,22 +192,21 @@ Pénalité : Porte 2-P1, P2 bâbord, P1 bâbord
 
 **Stratégie côté vent** : à chaque porte, le code détermine quelle bouée est la plus exposée à la brise (projection vectorielle vent · bouée) et l'enroule en passant le plus près possible.
 
-### Parcours 2 — Côtier court
+### Parcours 2 — "5 bouées" (briefing officiel du 8/5/2026)
 
 ```
-Bouées  : A, B (porte), C, D, E, Z1, Z2 (pénalité)
+Bouées  : 1, 2 (porte départ/arrivée), 3, 4, 5 (boucle), P1, P2 (pénalité)
 
-DÉPART   : Porte A-B
-WP 1 (C) : Contourner C TRIBORD
-WP 2 (D) : Contourner D BÂBORD
-WP 3 (E) : Contourner E BÂBORD
-WP 4 (C) : Contourner C TRIBORD
-ARRIVÉE  : Porte A-B
-Pénalité : A-Z1, Z2 bâbord, Z1 bâbord
+DÉPART   : Franchir porte 1-2
+TOUR 1   : 5 BÂBORD → 4 BÂBORD → 3 BÂBORD → 1 BÂBORD
+TOUR 2   : 5 BÂBORD → 4 BÂBORD → 3 BÂBORD → 1 BÂBORD
+ARRIVÉE  : Franchir porte 1-2
+Pénalité : Porte 2-P1, P2 bâbord, P1 bâbord (commune au parcours 1)
 ```
 
-> **Note** : le parcours N°3 (côtier long avec bouées F/G au large) a été
-> retiré du programme. UTT court uniquement les parcours 1 ou 2 en 2026.
+Les 4 premières bouées (1, 2, 3, 4) sont COMMUNES au parcours 1. Seule la bouée 5 est ajoutée. Tous les contournements sont en BÂBORD par défaut, à confirmer au briefing matin (modifier `_COURSE2_DEFAULT_SIDE` dans `config.py` si l'orga annonce TRIBORD).
+
+> **Note** : les parcours côtiers historiques (A, B, C, D, E + Z1/Z2) et le parcours N°3 ont été retirés. La régate UTT 2026 utilise exclusivement les parcours 1 et 2 ci-dessus.
 
 ### Rayon de capture adaptatif (commun aux 2 parcours)
 
@@ -287,7 +286,7 @@ Pilote constate la dérive → levier HAUT (MANUEL)
         ├─ Le pilote remet le drone sur la trajectoire
         ├─ Puis pilote le tour de pénalité à la main :
         │      Parcours 1 : porte 2-P1 → P2 bâbord → P1 bâbord
-        │      Parcours 2 : porte A-Z1 → Z2 bâbord → Z1 bâbord
+        │      (séquence commune aux 2 parcours depuis le briefing 8/5)
         ├─ Pilote rebascule le levier en BAS (AUTO)
         │
         └─ Le drone reprend le parcours à l'étape COURANTE
@@ -296,7 +295,7 @@ Pilote constate la dérive → levier HAUT (MANUEL)
 
 Limite réglementaire : **30 s max RC** par pénalité. Au-delà, l'auto reprend automatiquement.
 
-Le déclenchement programmatique de la séquence Z1/Z2 ou P1/P2 reste possible via `app.request_penalty(reason=...)` (utile pour des tests).
+Le déclenchement programmatique de la séquence P1/P2 reste possible via `app.request_penalty(reason=...)` (utile pour des tests).
 
 ---
 
@@ -364,14 +363,14 @@ Trame de 1500 ms / 2 slots de 750 ms pour la couche TDMA fine interne.
 
 **J-2 (7 mai)**
 - [ ] Vérifier canal Meshtastic = `BATTLEBOATS` sur les 2 ESP32
-- [ ] Simulateur sur les 2 parcours (1 banane, 2 côtier court) avec les 2 configs
+- [ ] Simulateur sur les 2 parcours (1 banane, 2 "5 bouées") avec les 2 configs
 
 **J-1 (8 mai — entraînement)**
 - [ ] **Calibration polaire** sur l'eau : `python3 -m calibration.polar_calibration --wind-source lora`
 - [ ] **Réglage PID gouvernail** sur l'eau
 - [ ] Fix RTK vérifié sur les 2 drones (`tests/test_rtk.py`)
 - [ ] Test essaim 2 drones simultanés (TDMA + LoRa)
-- [ ] Test séquence pénalité autonome sur l'eau (P1/P2 et Z1/Z2)
+- [ ] Test séquence pénalité autonome sur l'eau (P1/P2)
 - [ ] Test mode ESSAI avec coordonnées custom
 - [ ] Charger `docs/ardupilot_params.txt` sur les 2 Cubes
 

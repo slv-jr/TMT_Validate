@@ -9,7 +9,7 @@ USAGE
 VARIABLES D'ENVIRONNEMENT
     DRONE_ID            U1B1 ou U1B2 (défaut U1B1)
     STORMWINGS_MODE     ESSAI ou REGATE (défaut REGATE)
-    COURSE_NUMBER       1 (banane) ou 2 (côtier) — défaut 2
+    COURSE_NUMBER       1 (banane) ou 2 ("5 bouées" briefing 8/5) — défaut 2
     WIND_DIR_DEG        Direction vent en mode ESSAI (défaut 90 = E)
     WIND_SPEED_MS       Vitesse vent en mode ESSAI (défaut 4.5)
     WIND_FALLBACK_DIR   Direction fallback en RÉGATE si orga muette (défaut 90)
@@ -20,15 +20,18 @@ ID OFFICIELS (cf. BATTLEBOATS_LORA_PROTOCOL_v5.pdf, équipe UTT)
     U1B1 → drone 1 (Scout, départ T+0, agressif)
     U1B2 → drone 2 (Optimizer, départ T+30s, utilise data Scout)
 
-PARCOURS (cf. Reglement Battleboats 2026 V2.3 §4)
+PARCOURS — coordonnées briefing du 9 mai 2026 (Plage du Mourillon, Toulon)
     1 → "banane"      4 bouées (1, 2, 3, 4) + pénalité (P1, P2). 2 tours.
                        Portes 1-2 (départ/arrivée) et 3-4 (au vent).
                        Stratégie StormWings : SPIRALE ALTERNÉE figée au
                        franchissement de la ligne de départ —
                        côté T = 3 → 1 → 4 → arrivée  (si bouée 3 + au vent)
                        côté B = 4 → 2 → 3 → arrivée  (si bouée 4 + au vent)
-    2 → côtier court  A, B, C, D, E + pénalité Z1, Z2.
-                       A-B → C(stbd) → D(port) → E(port) → C(stbd) → A-B
+    2 → "5 bouées"    5 bouées (1, 2, 3, 4, 5) + pénalité (P1, P2). 2 tours.
+                       Porte 1-2 (départ/arrivée). Séquence par tour :
+                       porte 1-2 → bouée 5 → bouée 4 → bouée 3 → bouée 1.
+                       Tous les contournements en BÂBORD par défaut
+                       (à confirmer au briefing matin).
 
 HARDWARE — paramètres ArduPilot validés (setup NouvelEncodeur officiel)
     Encodeur PPM = Arduino Nano flashé ArduPPM v2.3.16. Mapping côté Cube :
@@ -45,7 +48,7 @@ STRATÉGIE GÉNÉRALE
     - Rayon de capture des bouées ADAPTATIF selon le fix : 4 m en RTK,
       7 m en fallback GPS standard.
     - Pénalité : NON détectée automatiquement. Le pilote constate la dérive,
-      reprend la main (levier HAUT), fait le tour Z1/Z2 ou P1/P2 à la radio,
+      reprend la main (levier HAUT), fait le tour P1/P2 à la radio,
       remet AUTO (levier BAS). Le drone reprend le parcours à course.current_idx.
 """
 
@@ -231,8 +234,11 @@ MY_TDMA_OFFSET_MS: int = TDMA_SLOTS.get(DRONE_ID, 0)
 # ════════════════════════════════════════════════════════════════════════
 # REPÈRE GPS LOCAL — origine pour outils de visualisation
 # ════════════════════════════════════════════════════════════════════════
-ORIGIN_LAT: float = 43.0967     # Plage du Mourillon, Toulon
-ORIGIN_LON: float = 5.9533
+# Plage du Mourillon Ouest, Toulon — barycentre des bouées 1-5 du briefing
+# du 9 mai 2026. Sert uniquement à l'affichage local (matplotlib), tous les
+# calculs de navigation se font en GPS.
+ORIGIN_LAT: float = 43.10723
+ORIGIN_LON: float = 5.94099
 
 
 @dataclass(frozen=True)
@@ -243,50 +249,39 @@ class BuoyPos:
 
 
 # ════════════════════════════════════════════════════════════════════════
-# BOUÉES — 2 jeux de coordonnées GPS par défaut (parcours banane + côtier)
+# BOUÉES — coordonnées officielles communiquées par l'orga le 8/5/2026 (J-1)
 # ════════════════════════════════════════════════════════════════════════
-# ⚠️ ÉDITER LE MATIN DE LA COURSE avec les coordonnées officielles via
-#    `python3 -m tools.buoy_entry`, qui écrit /etc/stormwings/buoys_today.json
-#    et override automatiquement les valeurs ci-dessous.
+# ⚠️ Le briefing matin (J0, 9h30) peut affiner ces valeurs. Si c'est le cas,
+#    saisir les corrections via `python3 -m tools.buoy_entry`, qui écrit
+#    /etc/stormwings/buoys_today.json et override automatiquement les
+#    valeurs ci-dessous (sans toucher au code).
 #
 # Format : "NOM_BOUÉE": (latitude_décimale, longitude_décimale)
 #
-# Les bouées sont mises dans un dictionnaire UNIQUE BUOYS_GPS qui mélange les
-# deux jeux. Les noms étant disjoints (chiffres pour la banane, lettres pour
-# le côtier), il n'y a pas de conflit.
+# RÈGLES DE PARTAGE :
+#   - Bouées 1, 2, 3, 4 : COMMUNES aux parcours 1 (banane) et 2 (5 bouées).
+#   - Bouée 5            : utilisée UNIQUEMENT par le parcours 2.
+#   - Bouées P1, P2      : pénalité P1/P2 sur les DEUX parcours (à confirmer
+#                          au briefing — placeholders ci-dessous).
 
-# --- Parcours côtier court (N°2) — valeurs PLACEHOLDER ---
-_BUOYS_COTIER: Dict[str, Tuple[float, float]] = {
-    # Porte départ/arrivée (~30 m d'écartement)
-    "A":  (43.0967000, 5.9542853),   # tribord porte
-    "B":  (43.0964302, 5.9542853),   # bâbord porte
-    # Bouée centrale (visitée 2x au cours du parcours)
-    "C":  (43.0965201, 5.9533000),
-    # Triangle nord-ouest
-    "D":  (43.0968799, 5.9529305),
-    "E":  (43.0967450, 5.9523147),
-    # Bouées zone pénalité côtier (au nord-est du parcours)
-    "Z1": (43.0969698, 5.9545316),
-    "Z2": (43.0971497, 5.9545316),
+_BUOYS_REGATE: Dict[str, Tuple[float, float]] = {
+    # --- Bouées de régate (briefing officiel J-1) ---
+    "1":  (43.10729166666667, 5.9412796666666665),   # porte départ — tribord
+    "2":  (43.1074215,        5.941155833333333),    # porte départ — bâbord
+    "3":  (43.10696383333333, 5.940718666666667),    # bouée sud
+    "4":  (43.10710616666667, 5.9405145),            # bouée ouest
+    "5":  (43.107527,         5.940586),             # bouée nord (parcours 2)
+    # --- Pénalité P1/P2 ---
+    # Coordonnées NON encore communiquées par l'orga ; placeholder décalé
+    # ~50 m au sud-est de la porte 1-2 (à éditer au briefing matin si l'orga
+    # publie les coords). Comme la pénalité est gérée manuellement à la radio
+    # par le pilote, ces valeurs ne sont JAMAIS waypoint actif du runtime —
+    # elles servent juste de référence visuelle et de cohérence interne.
+    "P1": (43.10720,          5.94155),
+    "P2": (43.10720,          5.94170),
 }
 
-# --- Parcours banane (N°1) — valeurs PLACEHOLDER ---
-# Géométrie : porte 1-2 (basse, ~30 m largeur), porte 3-4 (haute, ~80 m au vent),
-# axe 3-4 perpendiculaire à axe 1-3. Pénalité P1-P2 décalée de la porte 2.
-_BUOYS_BANANE: Dict[str, Tuple[float, float]] = {
-    # Porte basse = départ/arrivée
-    "1":  (43.0964000, 5.9543000),   # tribord porte basse
-    "2":  (43.0962000, 5.9543000),   # bâbord porte basse
-    # Porte haute = porte au vent (~80 m au vent de la porte basse, axe ⊥)
-    "3":  (43.0971000, 5.9543000),   # tribord porte haute
-    "4":  (43.0971000, 5.9540000),   # bâbord porte haute
-    # Pénalité parcours construit (décalée de la porte 2, à bâbord)
-    "P1": (43.0962500, 5.9545500),
-    "P2": (43.0964000, 5.9545500),
-}
-
-# Dictionnaire combiné — utilisé par le runtime
-BUOYS_GPS: Dict[str, Tuple[float, float]] = {**_BUOYS_COTIER, **_BUOYS_BANANE}
+BUOYS_GPS: Dict[str, Tuple[float, float]] = dict(_BUOYS_REGATE)
 
 
 def load_buoys_from_file(path: str) -> bool:
@@ -341,15 +336,15 @@ load_buoys_from_file(BUOYS_OVERRIDE_PATH)
 
 
 # ════════════════════════════════════════════════════════════════════════
-# DÉFINITION DES 3 PARCOURS — séquences ordonnées de "legs"
+# DÉFINITION DES 2 PARCOURS — séquences ordonnées de "legs"
 # ════════════════════════════════════════════════════════════════════════
 # Format leg : {"name": str, "buoy": str, "side": "starboard"|"port"|"gate"}
 #
 #   "starboard" → bouée à TRIBORD du drone au moment du contournement
 #                 (le drone passe à gauche de la bouée vue d'en haut)
 #   "port"      → bouée à BÂBORD du drone (drone passe à droite)
-#   "gate"      → franchissement de porte entre 2 bouées (champ buoy = "AB",
-#                 "12", "34", etc. — le code lit chaque caractère)
+#   "gate"      → franchissement de porte entre 2 bouées (champ buoy = "12",
+#                 "34", etc. — le code lit chaque caractère)
 
 # --- PARCOURS N°1 — Banane (parcours construit) ---
 # 2 tours, chaque porte (1-2, 3-4) impose d'enrouler la bouée 1 OU 2 (resp.
@@ -375,14 +370,27 @@ COURSE_1_LEGS: List[Dict] = [
     {"name": "ARRIVEE",         "buoy": "12", "side": "gate"},
 ]
 
-# --- PARCOURS N°2 — Côtier court ---
+# --- PARCOURS N°2 — 5 bouées (cf. Parcours2.png briefing du 8/5/2026) ---
+# Géométrie : porte 1-2 départ/arrivée, plus 3 bouées formant une boucle
+# (5 au nord, 4 à l'ouest, 3 au sud) puis retour par 1 vers la porte. 2 tours.
+#
+# Sens de contournement : tous BÂBORD par défaut (à confirmer au briefing
+# matin — modifier `_COURSE2_DEFAULT_SIDE` ci-dessous au besoin).
+_COURSE2_DEFAULT_SIDE: str = "port"
+
 COURSE_2_LEGS: List[Dict] = [
-    {"name": "DEPART",     "buoy": "AB", "side": "gate"},
-    {"name": "ETAPE_1_C",  "buoy": "C",  "side": "starboard"},
-    {"name": "ETAPE_2_D",  "buoy": "D",  "side": "port"},
-    {"name": "ETAPE_3_E",  "buoy": "E",  "side": "port"},
-    {"name": "ETAPE_4_C",  "buoy": "C",  "side": "starboard"},
-    {"name": "ARRIVEE",    "buoy": "AB", "side": "gate"},
+    {"name": "DEPART",  "buoy": "12", "side": "gate"},
+    # Tour 1
+    {"name": "T1_5",    "buoy": "5",  "side": _COURSE2_DEFAULT_SIDE},
+    {"name": "T1_4",    "buoy": "4",  "side": _COURSE2_DEFAULT_SIDE},
+    {"name": "T1_3",    "buoy": "3",  "side": _COURSE2_DEFAULT_SIDE},
+    {"name": "T1_1",    "buoy": "1",  "side": _COURSE2_DEFAULT_SIDE},
+    # Tour 2
+    {"name": "T2_5",    "buoy": "5",  "side": _COURSE2_DEFAULT_SIDE},
+    {"name": "T2_4",    "buoy": "4",  "side": _COURSE2_DEFAULT_SIDE},
+    {"name": "T2_3",    "buoy": "3",  "side": _COURSE2_DEFAULT_SIDE},
+    {"name": "T2_1",    "buoy": "1",  "side": _COURSE2_DEFAULT_SIDE},
+    {"name": "ARRIVEE", "buoy": "12", "side": "gate"},
 ]
 
 # Dictionnaire d'index pour sélection runtime
@@ -396,31 +404,25 @@ COURSE_LEGS: List[Dict] = _COURSES_LEGS[COURSE_NUMBER]
 
 
 # ════════════════════════════════════════════════════════════════════════
-# SÉQUENCES DE PÉNALITÉ — différent selon parcours construit vs côtier
+# SÉQUENCE DE PÉNALITÉ — commune aux 2 parcours retenus (briefing du 8/5/2026)
 # ════════════════════════════════════════════════════════════════════════
 # Cf. Reglement Battleboats 2026 V2.3 §6 "Système de pénalité"
 #
-# PARCOURS CONSTRUIT (1) : passer entre 2 et P1 → P2 bâbord → P1 bâbord
-# PARCOURS CÔTIER (2/3)  : passer entre A et Z1 → Z2 bâbord → Z1 bâbord
-
-# --- Pénalité parcours côtier ---
-PENALTY_LEGS_COTIER: List[Dict] = [
-    {"name": "PEN_1_Z1",  "buoy": "Z1", "side": "port"},
-    {"name": "PEN_2_Z2",  "buoy": "Z2", "side": "port"},
-    {"name": "PEN_3_Z1",  "buoy": "Z1", "side": "port"},
-]
-
-# --- Pénalité parcours banane ---
+# Les parcours 1 (banane) et 2 (5 bouées) partagent la même paire de bouées
+# de pénalité P1/P2. La séquence : passer entre 2 et P1 → P2 bâbord → P1 bâbord.
+#
+# Cette séquence n'est PAS exécutée automatiquement par le code : la pénalité
+# est constatée par le pilote, qui reprend la main au levier MANUEL et fait
+# le tour à la radio. La structure ci-dessous sert uniquement de référence
+# pour le module penalty_manager (logging, snapshot, reprise).
 PENALTY_LEGS_BANANE: List[Dict] = [
     {"name": "PEN_1_P1",  "buoy": "P1", "side": "port"},
     {"name": "PEN_2_P2",  "buoy": "P2", "side": "port"},
     {"name": "PEN_3_P1",  "buoy": "P1", "side": "port"},
 ]
 
-# Sélection runtime (pénalité active selon le COURSE_NUMBER)
-PENALTY_LEGS: List[Dict] = (
-    PENALTY_LEGS_BANANE if COURSE_NUMBER == 1 else PENALTY_LEGS_COTIER
-)
+# Pénalité active : P1/P2 quel que soit le parcours retenu (1 ou 2).
+PENALTY_LEGS: List[Dict] = PENALTY_LEGS_BANANE
 
 # Le pilote a 5 s pour basculer en MANUEL avant que l'auto prenne la main
 PENALTY_DECISION_TIMEOUT_S: float = 5.0
@@ -605,18 +607,26 @@ def course_legs_for(course_num: int) -> List[Dict]:
 
 def buoys_used_in_course(course_num: int) -> List[str]:
     """Retourne la liste des bouées utilisées dans le parcours (utile pour
-    `tools/buoy_entry.py` qui ne demande que les bouées pertinentes)."""
+    `tools/buoy_entry.py` qui ne demande que les bouées pertinentes).
+
+    Les noms de gates (ex. "12") sont automatiquement décomposés en
+    bouées individuelles ("1", "2"). Les bouées de pénalité P1/P2 sont
+    ajoutées en queue de liste (communes aux 2 parcours).
+    """
     legs = course_legs_for(course_num)
-    seen = []
+    seen: List[str] = []
     for leg in legs:
-        for ch in leg["buoy"]:
-            if ch not in seen:
-                seen.append(ch)
-    # Ajouter les bouées de pénalité associées
-    if course_num == 1:
-        seen.extend(["P1", "P2"])
-    else:
-        seen.extend(["Z1", "Z2"])
+        buoy = leg["buoy"]
+        # Une "gate" est un nom à plusieurs caractères chiffrés (ex. "12")
+        if leg.get("side") == "gate" and len(buoy) > 1:
+            for ch in buoy:
+                if ch not in seen:
+                    seen.append(ch)
+        else:
+            if buoy not in seen:
+                seen.append(buoy)
+    # Bouées de pénalité (toujours P1/P2)
+    seen.extend(["P1", "P2"])
     return seen
 
 
@@ -632,7 +642,7 @@ if __name__ == "__main__":
     print(f"  Capture radius    : RTK {CAPTURE_RADIUS_RTK}m / GPS {CAPTURE_RADIUS_GPS}m")
     print(f"  Bouées du parcours: {buoys_used_in_course(COURSE_NUMBER)}")
     print(f"  Étapes parcours   : {len(COURSE_LEGS)}")
-    print(f"  Pénalité          : {len(PENALTY_LEGS)} legs ({'banane P1/P2' if COURSE_NUMBER == 1 else 'côtier Z1/Z2'})")
+    print(f"  Pénalité          : {len(PENALTY_LEGS)} legs (P1/P2 — manuelle)")
     if is_essai():
         print(f"  Vent ESSAI        : {WIND_ESSAI_DIR_DEG:.0f}° / {WIND_ESSAI_SPEED_MS:.1f} m/s")
     else:

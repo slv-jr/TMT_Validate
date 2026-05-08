@@ -114,9 +114,10 @@ class TestConfig(unittest.TestCase):
     def test_only_two_courses_supported(self):
         """Le parcours 3 (côtier long) a été supprimé — seuls 1 et 2 existent."""
         self.assertEqual(set(config._COURSES_LEGS.keys()), {1, 2})
-        # Les bouées F et G ne sont plus dans BUOYS_GPS
-        self.assertNotIn("F", config.BUOYS_GPS)
-        self.assertNotIn("G", config.BUOYS_GPS)
+        # Les bouées F, G, A-E, Z1, Z2 ne sont plus dans BUOYS_GPS (briefing du 8/5)
+        for legacy in ("A", "B", "C", "D", "E", "F", "G", "Z1", "Z2"):
+            self.assertNotIn(legacy, config.BUOYS_GPS,
+                             msg=f"{legacy} ne doit plus exister")
 
     def test_course_1_has_4_buoys_plus_penalty(self):
         used = config.buoys_used_in_course(1)
@@ -124,23 +125,41 @@ class TestConfig(unittest.TestCase):
         for name in ["1", "2", "3", "4", "P1", "P2"]:
             self.assertIn(name, used,
                           msg=f"Parcours 1 doit utiliser {name}")
+        # La bouée 5 est exclusive au parcours 2
+        self.assertNotIn("5", used)
 
     def test_course_2_has_5_buoys_plus_penalty(self):
+        """Nouveau parcours 2 (briefing du 8/5/2026) : bouées 1, 2, 3, 4, 5
+        + pénalité P1/P2 (commune avec le parcours 1)."""
         used = config.buoys_used_in_course(2)
-        for name in ["A", "B", "C", "D", "E", "Z1", "Z2"]:
-            self.assertIn(name, used)
-        # F et G n'existent plus (parcours 3 supprimé)
-        self.assertNotIn("F", used)
-        self.assertNotIn("G", used)
+        for name in ["1", "2", "3", "4", "5", "P1", "P2"]:
+            self.assertIn(name, used,
+                          msg=f"Parcours 2 doit utiliser {name}")
+        # Plus aucune bouée côtier historique
+        for legacy in ["A", "B", "C", "D", "E", "Z1", "Z2"]:
+            self.assertNotIn(legacy, used)
 
-    def test_penalty_legs_selection(self):
-        """PENALTY_LEGS doit pointer vers P1/P2 (parcours 1) ou Z1/Z2 (parcours 2)."""
-        if config.COURSE_NUMBER == 1:
-            buoys = {leg["buoy"] for leg in config.PENALTY_LEGS}
-            self.assertEqual(buoys, {"P1", "P2"})
-        else:
-            buoys = {leg["buoy"] for leg in config.PENALTY_LEGS}
-            self.assertEqual(buoys, {"Z1", "Z2"})
+    def test_course_2_geometry(self):
+        """Parcours 2 = porte départ + 2 tours de 4 bouées + porte arrivée."""
+        legs = config.course_legs_for(2)
+        self.assertEqual(legs[0]["name"], "DEPART")
+        self.assertEqual(legs[0]["buoy"], "12")
+        self.assertEqual(legs[-1]["name"], "ARRIVEE")
+        self.assertEqual(legs[-1]["buoy"], "12")
+        # 1 départ + 4 bouées × 2 tours + 1 arrivée = 10 étapes
+        self.assertEqual(len(legs), 10)
+        # Séquence par tour : 5 → 4 → 3 → 1
+        sequence_t1 = [legs[i]["buoy"] for i in range(1, 5)]
+        sequence_t2 = [legs[i]["buoy"] for i in range(5, 9)]
+        self.assertEqual(sequence_t1, ["5", "4", "3", "1"])
+        self.assertEqual(sequence_t2, ["5", "4", "3", "1"])
+
+    def test_penalty_legs_unified(self):
+        """PENALTY_LEGS pointe sur P1/P2 quel que soit le parcours (briefing 8/5)."""
+        buoys = {leg["buoy"] for leg in config.PENALTY_LEGS}
+        self.assertEqual(buoys, {"P1", "P2"})
+        self.assertEqual(len(config.PENALTY_LEGS), 3,
+                         msg="P1 → P2 → P1 = 3 legs")
 
 
 # ════════════════════════════════════════════════════════════════════════
@@ -490,10 +509,11 @@ class TestProtocol(unittest.TestCase):
 
 
 # ════════════════════════════════════════════════════════════════════════
-# COURSE — rayon adaptatif RTK / GPS (testé sur le parcours côtier 2)
+# COURSE — rayon adaptatif RTK / GPS (testé sur le parcours 2 "5 bouées")
 # ════════════════════════════════════════════════════════════════════════
 class TestCourse(unittest.TestCase):
-    """Ces tests s'appuient sur la séquence côtière A-B → C → D → E …
+    """Ces tests s'appuient sur la séquence du parcours 2 du briefing 8/5 :
+    porte 1-2 → 5 (port) → 4 (port) → 3 (port) → 1 (port) → … (2 tours).
     On force donc temporairement COURSE_NUMBER=2 quel que soit l'env."""
 
     def setUp(self):
@@ -512,48 +532,46 @@ class TestCourse(unittest.TestCase):
         self.assertEqual(cm.current_leg.name, "DEPART")
 
     def test_progression(self):
+        """Franchir la porte 1-2 → on enchaîne sur T1_5 (bouée 5)."""
         cm = CourseManager()
-        a = config.BUOYS_GPS["A"]
-        b = config.BUOYS_GPS["B"]
-        gate_mid = ((a[0] + b[0]) / 2, (a[1] + b[1]) / 2)
+        b1 = config.BUOYS_GPS["1"]
+        b2 = config.BUOYS_GPS["2"]
+        gate_mid = ((b1[0] + b2[0]) / 2, (b1[1] + b2[1]) / 2)
+        # Trajectoire qui traverse le segment 1-2 d'est en ouest.
         before = geo_utils.move_meters(gate_mid, 30.0, 0.0)
         after = geo_utils.move_meters(gate_mid, -30.0, 0.0)
         cm.update_and_validate(before)
         cm.update_and_validate(after)
         self.assertTrue(cm.race_started)
-        self.assertEqual(cm.current_leg.name, "ETAPE_1_C")
+        self.assertEqual(cm.current_leg.name, "T1_5")
 
     def test_capture_radius_strict_in_rtk(self):
-        """En RTK, un point à 5 m d'une bouée NE doit PAS la valider (rayon 4 m)."""
+        """En RTK, un point à 5.5 m d'une bouée NE doit PAS la valider (rayon 4 m)."""
         cm = CourseManager()
-        # On force le mode "post-départ"
-        cm.current_idx = 1     # ETAPE_1_C
+        cm.current_idx = 1     # T1_5
         cm.race_started = True
-        c = config.BUOYS_GPS["C"]
-        # Approche à 5 m de C (au-delà du rayon RTK 4 m)
-        before = geo_utils.move_meters(c, 8.0, 0.0)
-        after = geo_utils.move_meters(c, 5.5, 0.0)
+        b5 = config.BUOYS_GPS["5"]
+        before = geo_utils.move_meters(b5, 8.0, 0.0)
+        after = geo_utils.move_meters(b5, 5.5, 0.0)
         cm.update_and_validate(before, rtk_fixed=True)
         cm.update_and_validate(after, rtk_fixed=True)
-        self.assertEqual(cm.current_leg.name, "ETAPE_1_C",
+        self.assertEqual(cm.current_leg.name, "T1_5",
                          msg="Étape ne doit pas être validée à 5.5 m en RTK")
 
     def test_capture_radius_lax_in_gps(self):
-        """En GPS standard (rayon 7 m), un point à 5 m DOIT valider."""
+        """En GPS standard (rayon 7 m), un point à 5.5 m du bon côté DOIT valider."""
         cm = CourseManager()
-        cm.current_idx = 1
+        cm.current_idx = 1     # T1_5 (bouée 5, side=port → bateau passe à droite)
         cm.race_started = True
-        c = config.BUOYS_GPS["C"]
-        # Approche au bord — pour valider il faut aussi le bon côté (starboard
-        # = bouée à droite → trajectoire passant à GAUCHE de la bouée, càd
-        # cross < 0). Trajet sud→nord avec bouée à l'EST (offset E +5m).
-        before = geo_utils.move_meters(c, -5.5, -3.0)   # SO de C
-        after = geo_utils.move_meters(c, -5.5, 3.0)     # NO de C, à 5.5 m
+        b5 = config.BUOYS_GPS["5"]
+        # Côté "port" = bouée à BÂBORD du bateau → trajectoire passant à
+        # DROITE de la bouée (offset east > 0, cross > 0). Trajet sud→nord.
+        before = geo_utils.move_meters(b5, 5.5, -3.0)
+        after = geo_utils.move_meters(b5, 5.5, 3.0)
         cm.update_and_validate(before, rtk_fixed=False)
         cm.update_and_validate(after, rtk_fixed=False)
-        # En GPS, le rayon est 7 m → 5.5 m doit valider l'étape
         self.assertNotEqual(
-            cm.current_leg.name, "ETAPE_1_C",
+            cm.current_leg.name, "T1_5",
             msg="Étape doit être validée à 5.5 m en GPS standard",
         )
 
@@ -662,7 +680,7 @@ class TestPenaltyManager(unittest.TestCase):
     def test_wait_to_manual_when_pilot_takes_over(self):
         pm = PenaltyManager()
         pm.start()
-        boat = config.BUOYS_GPS["Z1"]
+        boat = config.BUOYS_GPS["P1"]
         st = pm.update(boat_pos=boat, control_mode_is_manual=True,
                        rtk_fixed=True)
         self.assertEqual(st.mode, PenaltyMode.MANUAL)
@@ -670,9 +688,8 @@ class TestPenaltyManager(unittest.TestCase):
     def test_wait_to_auto_after_timeout(self):
         pm = PenaltyManager()
         pm.start()
-        # Forcer le timeout
         pm._t0 = time.monotonic() - (config.PENALTY_DECISION_TIMEOUT_S + 0.5)
-        st = pm.update(boat_pos=config.BUOYS_GPS["A"],
+        st = pm.update(boat_pos=config.BUOYS_GPS["1"],
                        control_mode_is_manual=False, rtk_fixed=True)
         self.assertEqual(st.mode, PenaltyMode.AUTO)
 
@@ -681,7 +698,7 @@ class TestPenaltyManager(unittest.TestCase):
         pm.start()
         pm._mode = PenaltyMode.AUTO
         pm._t0 = time.monotonic() - 10
-        # 1ère étape de pénalité dynamique selon le parcours actif (P1 ou Z1)
+        # 1ère étape de pénalité (P1 commun aux 2 parcours depuis le briefing 8/5)
         first_buoy = config.PENALTY_LEGS[0]["buoy"]
         st = pm.update(boat_pos=config.BUOYS_GPS[first_buoy],
                        control_mode_is_manual=False, rtk_fixed=True)
@@ -807,20 +824,13 @@ class TestWindEstimator(unittest.TestCase):
 # ════════════════════════════════════════════════════════════════════════
 class TestGenericGates(unittest.TestCase):
 
-    def test_buoy_gps_handles_AB_gate(self):
-        """buoy_gps('AB') = milieu géométrique de A et B."""
-        a = config.BUOYS_GPS["A"]
-        b = config.BUOYS_GPS["B"]
-        mid = geo_utils.buoy_gps("AB")
-        self.assertAlmostEqual(mid[0], (a[0] + b[0]) / 2.0, places=6)
-        self.assertAlmostEqual(mid[1], (a[1] + b[1]) / 2.0, places=6)
-
     def test_buoy_gps_handles_12_gate(self):
-        """buoy_gps('12') doit fonctionner pour le parcours banane."""
+        """buoy_gps('12') = milieu géométrique de la porte 1-2 (départ commun)."""
         b1 = config.BUOYS_GPS["1"]
         b2 = config.BUOYS_GPS["2"]
         mid = geo_utils.buoy_gps("12")
         self.assertAlmostEqual(mid[0], (b1[0] + b2[0]) / 2.0, places=6)
+        self.assertAlmostEqual(mid[1], (b1[1] + b2[1]) / 2.0, places=6)
 
     def test_buoy_gps_handles_34_gate(self):
         """buoy_gps('34') doit fonctionner pour la porte au vent du parcours 1."""
@@ -828,6 +838,12 @@ class TestGenericGates(unittest.TestCase):
         b4 = config.BUOYS_GPS["4"]
         mid = geo_utils.buoy_gps("34")
         self.assertAlmostEqual(mid[0], (b3[0] + b4[0]) / 2.0, places=6)
+
+    def test_buoy_gps_handles_single_buoy_5(self):
+        """buoy_gps('5') retourne la bouée 5 (parcours 2 du briefing 8/5)."""
+        b5 = config.BUOYS_GPS["5"]
+        pos = geo_utils.buoy_gps("5")
+        self.assertEqual(pos, b5)
 
     def test_gate_endpoints_with_arg(self):
         """gate_endpoints_gps prend un argument et retourne les 2 bouées."""

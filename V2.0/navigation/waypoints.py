@@ -22,8 +22,14 @@ selon `COURSE_NUMBER`) :
         Le choix est figé au franchissement du départ et NE CHANGE PLUS
         même si le vent évolue (cohérence de trajectoire).
 
-    Parcours 2 (côtier court) :
-        Départ A-B → C(stbd) → D(port) → E(port) → C(stbd) → Arrivée A-B
+    Parcours 2 ("5 bouées" — briefing officiel du 8/5/2026) :
+        Départ porte 1-2 →
+        Tour 1 : 5(port) → 4(port) → 3(port) → 1(port) →
+        Tour 2 : 5(port) → 4(port) → 3(port) → 1(port) →
+        Arrivée porte 1-2
+
+        Tous les contournements en BÂBORD (port) par défaut. Modifier
+        `_COURSE2_DEFAULT_SIDE` dans config.py si l'orga annonce TRIBORD.
 
 Toutes les positions manipulées sont en GPS (lat, lon). Les waypoints
 d'approche sont calculés via `move_meters` à partir d'un offset
@@ -307,10 +313,10 @@ class CourseManager:
                             log.info("[COURSE] Porte d'arrivée %s franchie — FIN", leg.buoy)
                             validated = True
                     else:
-                        # Porte intermédiaire (uniquement parcours côtier
-                        # avec side="gate" — le parcours 1 a été remplacé
-                        # par des bouées individuelles au franchissement
-                        # du DEPART).
+                        # Porte intermédiaire — n'est plus utilisée par les
+                        # 2 parcours du briefing 8/5 (1 banane et 2 "5 bouées"),
+                        # qui n'ont que DEPART et ARRIVEE comme gates. Le code
+                        # reste en place pour rétrocompatibilité future.
                         if self.race_started:
                             log.info("[COURSE] Porte %s (%s) franchie", leg.buoy, leg.name)
                             validated = True

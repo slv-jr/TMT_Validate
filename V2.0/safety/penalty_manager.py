@@ -1,21 +1,17 @@
 """
 Gestion d'une pénalité (cf. règlement Battleboats 2026 V2.3 §6).
 
-La séquence de pénalité dépend du parcours actif (config.COURSE_NUMBER) :
+Depuis le briefing du 8/5/2026, la séquence de pénalité est COMMUNE aux
+deux parcours retenus (1 banane, 2 "5 bouées") :
 
-    Parcours 1 (banane) :
-        1. Passer entre 2 et P1 (vers P1)
-        2. Enrouler P2 par BÂBORD
-        3. Enrouler P1 par BÂBORD
-    Parcours 2 (côtier court) :
-        1. Passer entre A et Z1 (vers Z1)
-        2. Enrouler Z2 par BÂBORD
-        3. Enrouler Z1 par BÂBORD
+    1. Passer entre 2 et P1 (vers P1)
+    2. Enrouler P2 par BÂBORD
+    3. Enrouler P1 par BÂBORD
     4. Reprendre le parcours là où on l'avait laissé.
 
-La séquence de bouées correspondante (P1/P2 ou Z1/Z2) est déjà
-sélectionnée dynamiquement via `config.PENALTY_LEGS`. Ce module n'a
-donc pas besoin de connaître le parcours — il suit la séquence active.
+La séquence est exposée par `config.PENALTY_LEGS` (P1 → P2 → P1). Ce
+module n'a donc pas besoin de connaître le parcours actif — il suit la
+séquence active.
 
 Politique de bascule (cf. README2) :
     - Au déclenchement d'une pénalité : on entre en sous-état `WAIT`.

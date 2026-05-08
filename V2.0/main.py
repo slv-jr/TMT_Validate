@@ -6,7 +6,7 @@ Boucle 10 Hz :
     2. Détection mode dégradé (GPS, RTK, LoRa, MAVLink, batterie)
     3. Bascule MANUEL ↔ AUTO selon le levier 3 positions (config.CH_MODE)
     4. AUTO → décision navigation (priorité décroissante) :
-        a) PENALITE active → on suit la séquence P1/P2 ou Z1/Z2/Z1 selon parcours
+        a) PENALITE active → on suit la séquence P1/P2/P1 (commune aux 2 parcours)
         b) STALL détecté   → on déclenche la manœuvre de dégagement
         c) Pré-départ      → loiter circle si U1B2 (T+30s), idle si U1B1
         d) Sinon           → VMG / layline / champ de potentiel / PID
@@ -17,7 +17,7 @@ Boucle 10 Hz :
 Lancement (cf. config.py pour la liste complète des variables) :
     DRONE_ID=U1B1 STORMWINGS_MODE=REGATE COURSE_NUMBER=2 python3 main.py
     DRONE_ID=U1B2 STORMWINGS_MODE=REGATE COURSE_NUMBER=2 python3 main.py
-    DRONE_ID=U1B1 STORMWINGS_MODE=ESSAI  COURSE_NUMBER=3 \
+    DRONE_ID=U1B1 STORMWINGS_MODE=ESSAI  COURSE_NUMBER=1 \
         WIND_DIR_DEG=270 WIND_SPEED_MS=4.5 python3 main.py
 
 Stratégie 2 drones (cf. config._DRONE_PROFILES) :
@@ -136,9 +136,8 @@ class StormWingsApp:
             config.DEFAULT_ROLE, config.STRATEGY, config.RACE_START_OFFSET_S,
         )
         self.log.info(
-            "Parcours %d : %d étapes — pénalité %s",
+            "Parcours %d : %d étapes — pénalité P1/P2 (commune aux 2 parcours)",
             config.COURSE_NUMBER, len(config.COURSE_LEGS),
-            "P1/P2 (banane)" if config.COURSE_NUMBER == 1 else "Z1/Z2 (côtier)",
         )
         if config.is_essai():
             self.log.info(
@@ -710,7 +709,7 @@ class StormWingsApp:
         """Hook externe (CLI, GCS, GPIO bouton) pour déclencher une pénalité.
 
         L'option par défaut suspend le parcours à l'étape courante et lance
-        la séquence Z1/Z2/Z1.
+        la séquence P1 → P2 → P1 (commune aux 2 parcours, briefing 8/5).
         """
         self.log.warning("[PENALTY] Déclenchée (raison=%s)", reason)
         self.penalty.start(interrupted_leg_idx=self.course.current_idx)
