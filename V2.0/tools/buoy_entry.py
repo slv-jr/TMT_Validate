@@ -1,22 +1,26 @@
 """
 Saisie des coordonnées GPS officielles des bouées (matin J0 — 9 mai).
 
-Le matin de la course, les organisateurs annoncent les coordonnées GPS
-des 9 bouées (A, B, C, D, E, F, G, Z1, Z2). Cet outil :
+L'outil adapte automatiquement la liste des bouées au parcours actif
+(config.COURSE_NUMBER) :
 
+    Parcours 1 (banane)      : 1, 2, 3, 4, P1, P2  (6 bouées)
+    Parcours 2 (côtier court): A, B, C, D, E, Z1, Z2  (7 bouées)
+
+Cet outil :
     1) Affiche les bouées attendues une par une.
     2) Demande les coordonnées en lat/lon décimal (ex: 43.0967000 5.9542853)
        OU en degrés-minutes-décimales (ex: 43°5.802'N 5°57.171'E)
        OU directement copier-coller depuis le PDF du briefing.
-    3) Calcule les distances entre bouées et les écarts à la valeur attendue
-       (sanity check pour éviter une faute de frappe).
+    3) Calcule les distances entre bouées (sanity check anti-faute de frappe).
     4) Écrit le résultat dans config.BUOYS_OVERRIDE_PATH (par défaut
        /etc/stormwings/buoys_today.json) qui sera lu au démarrage du service.
 
 Usage :
-    DRONE_ID=U1B1 python3 -m tools.buoy_entry
-    # OU pour un fichier alternatif :
+    COURSE_NUMBER=2 python3 -m tools.buoy_entry         # parcours côtier court
+    COURSE_NUMBER=1 python3 -m tools.buoy_entry         # parcours banane
     BUOYS_OVERRIDE_PATH=/tmp/test.json python3 -m tools.buoy_entry
+    python3 -m tools.buoy_entry --all                   # saisir toutes (1+2)
 """
 
 from __future__ import annotations
@@ -41,8 +45,19 @@ logging.basicConfig(
 log = logging.getLogger("buoy_entry")
 
 
-# Bouées du parcours N°3 + bouées pénalité
-EXPECTED_BUOYS = ["A", "B", "C", "D", "E", "F", "G", "Z1", "Z2"]
+# Liste exhaustive des bouées possibles sur les 2 parcours retenus
+ALL_BUOYS = ["1", "2", "3", "4", "P1", "P2",          # parcours banane
+             "A", "B", "C", "D", "E", "Z1", "Z2"]     # parcours côtier court
+
+
+def expected_buoys_for_course(course_num: int, all_buoys: bool = False):
+    """Retourne la liste des bouées à saisir pour le parcours.
+
+    Si `all_buoys=True`, retourne toutes les bouées des 2 parcours retenus.
+    """
+    if all_buoys:
+        return list(ALL_BUOYS)
+    return config.buoys_used_in_course(course_num)
 
 
 # ────────────────────────────────────────────────────────────────────────
@@ -122,21 +137,25 @@ def prompt_buoy(name: str, default: Optional[Tuple[float, float]]):
         return coords
 
 
-def display_summary(buoys: Dict[str, Tuple[float, float]]):
+def display_summary(buoys: Dict[str, Tuple[float, float]],
+                    expected: list):
     print("\n" + "═" * 60)
     print("RÉCAPITULATIF DES BOUÉES :")
     print("═" * 60)
-    for name in EXPECTED_BUOYS:
+    for name in expected:
         if name in buoys:
             lat, lon = buoys[name]
             print(f"  {name:>3} : ({lat:.7f}, {lon:.7f})")
         else:
             print(f"  {name:>3} : (non saisie — fallback config.py)")
 
-    # Distances clés
+    # Distances clés selon le parcours
     print("\nDistances entre bouées (m) :")
-    pairs = [("A", "B"), ("A", "C"), ("C", "D"), ("D", "E"),
-             ("E", "F"), ("F", "G"), ("G", "C"), ("Z1", "Z2")]
+    pairs_banane = [("1", "2"), ("3", "4"), ("1", "3"), ("2", "4"),
+                    ("P1", "P2"), ("2", "P1")]
+    pairs_cotier = [("A", "B"), ("A", "C"), ("C", "D"), ("D", "E"),
+                    ("E", "C"), ("Z1", "Z2")]
+    pairs = pairs_banane if config.COURSE_NUMBER == 1 else pairs_cotier
     for a, b in pairs:
         if a in buoys and b in buoys:
             d = geo_utils.distance_m(buoys[a], buoys[b])
@@ -154,25 +173,38 @@ def main():
         "--use-defaults", action="store_true",
         help="Pré-remplir avec les valeurs config.BUOYS_GPS",
     )
+    parser.add_argument(
+        "--all", action="store_true",
+        help="Saisir TOUTES les bouées des 2 parcours (utile en briefing).",
+    )
+    parser.add_argument(
+        "--course", type=int, default=config.COURSE_NUMBER, choices=[1, 2],
+        help="Numéro de parcours (1 banane ou 2 côtier court).",
+    )
     args = parser.parse_args()
 
+    expected = expected_buoys_for_course(args.course, all_buoys=args.all)
+
     print("═" * 60)
-    print("SAISIE DES BOUÉES — Parcours N°3, BattleBoats 2026")
+    if args.all:
+        print("SAISIE DES BOUÉES — TOUS LES PARCOURS — BattleBoats 2026")
+    else:
+        print(f"SAISIE DES BOUÉES — Parcours N°{args.course} — BattleBoats 2026")
     print("═" * 60)
+    print(f"Bouées à saisir : {expected}")
     print("Tapez 'skip' pour passer une bouée (utilise la valeur de config.py).")
     print("Tapez ENTER seul pour accepter la valeur par défaut.")
     print()
 
     buoys: Dict[str, Tuple[float, float]] = {}
-    for name in EXPECTED_BUOYS:
+    for name in expected:
         default = config.BUOYS_GPS.get(name) if args.use_defaults else None
-        # Toujours afficher la valeur de config en référence
         ref = config.BUOYS_GPS.get(name)
         coords = prompt_buoy(name, ref)
         if coords is not None:
             buoys[name] = coords
 
-    display_summary(buoys)
+    display_summary(buoys, expected)
 
     if not buoys:
         print("\nAucune bouée saisie — rien à enregistrer.")

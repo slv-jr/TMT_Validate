@@ -1,23 +1,31 @@
 """
-StormWings — point d'entrée principal (cf. README2).
+StormWings — point d'entrée principal (régate à 2 drones).
 
 Boucle 10 Hz :
-    1. Lecture télémétrie (MAVLink) + estimation vent (LoRa Calypso)
+    1. Lecture télémétrie (MAVLink) + estimation vent (orga ou ESSAI)
     2. Détection mode dégradé (GPS, RTK, LoRa, MAVLink, batterie)
     3. Bascule MANUEL ↔ AUTO selon le levier 3 positions (config.CH_MODE)
     4. AUTO → décision navigation (priorité décroissante) :
-        a) PENALITE active → on suit la séquence Z1/Z2/Z1
+        a) PENALITE active → on suit la séquence P1/P2 ou Z1/Z2/Z1 selon parcours
         b) STALL détecté   → on déclenche la manœuvre de dégagement
-        c) Sinon           → VMG / layline / champ de potentiel / PID
-    5. Push override safran/voile en continu à 10 Hz
-       sur les canaux MAVLink config.CH_RUDDER / CH_SAIL.
+        c) Pré-départ      → loiter circle si U1B2 (T+30s), idle si U1B1
+        d) Sinon           → VMG / layline / champ de potentiel / PID
+    5. Push override safran/voile en continu à 10 Hz (chan4/chan5).
     6. Comm LoRa : broadcast P|... selon le slot TDMA (60 s décalés)
     7. Logging CSV horodaté
 
-Lancement :
-    DRONE_ID=U1B1 python3 main.py        # drone Scout
-    DRONE_ID=U1B2 python3 main.py        # drone Optimizer
-    DRONE_ID=U1B3 python3 main.py        # drone Safety
+Lancement (cf. config.py pour la liste complète des variables) :
+    DRONE_ID=U1B1 STORMWINGS_MODE=REGATE COURSE_NUMBER=2 python3 main.py
+    DRONE_ID=U1B2 STORMWINGS_MODE=REGATE COURSE_NUMBER=2 python3 main.py
+    DRONE_ID=U1B1 STORMWINGS_MODE=ESSAI  COURSE_NUMBER=3 \
+        WIND_DIR_DEG=270 WIND_SPEED_MS=4.5 python3 main.py
+
+Stratégie 2 drones (cf. config._DRONE_PROFILES) :
+    U1B1 (Scout)     : RACE_START_OFFSET_S=0,  part dès le top orga
+    U1B2 (Optimizer) : RACE_START_OFFSET_S=30, fait un cercle 50 m derrière
+                       la porte pendant 30 s pour calibrer la polaire en
+                       écoutant les broadcasts LoRa du Scout, puis franchit
+                       la porte avec un vent ajusté.
 """
 
 from __future__ import annotations
@@ -46,6 +54,7 @@ from safety.mode_switch import ControlMode, ModeSwitch
 from safety.penalty_manager import PenaltyManager, PenaltyMode
 from safety.stall_detector import StallDetector, StallLevel
 from swarm.roles import RoleManager
+from swarm.tactical import TacticalSnapshot, compute as tactical_compute, log_snapshot
 from swarm.tdma import TDMAScheduler
 from wind.wind_estimator import WindEstimator
 
@@ -105,19 +114,59 @@ class StormWingsApp:
         self._last_rudder_cmd_deg: float = 0.0
         self._last_role_eval_t: float = 0.0
         self._last_lora_msg_t: float = time.monotonic()
+        self._last_tactical_eval_t: float = 0.0
+        self._tactical: TacticalSnapshot = TacticalSnapshot()
         # Tracking adversaires : dernière position connue par bateau
         self._last_adversary_pos: Dict[str, Tuple[GPSPos, float]] = {}
+        # Timestamp de la dernière bascule en AUTO pré-départ — sert à compter
+        # les RACE_START_OFFSET_S secondes du loiter circle pour U1B2.
+        self._auto_pre_start_t: float = 0.0
 
     # ─────────────────────────────────────────────
     # Setup / Teardown
     # ─────────────────────────────────────────────
     def setup(self) -> bool:
         self.log.info("=" * 60)
-        self.log.info("StormWings %s — démarrage", config.DRONE_ID)
-        self.log.info("Rôle %s | Strategy %s",
-                      config.DEFAULT_ROLE, config.STRATEGY)
+        self.log.info(
+            "StormWings %s — MODE=%s — COURSE %d — démarrage",
+            config.DRONE_ID, config.MODE, config.COURSE_NUMBER,
+        )
+        self.log.info(
+            "Rôle %s | Strategy %s | Départ T+%.0fs",
+            config.DEFAULT_ROLE, config.STRATEGY, config.RACE_START_OFFSET_S,
+        )
+        self.log.info(
+            "Parcours %d : %d étapes — pénalité %s",
+            config.COURSE_NUMBER, len(config.COURSE_LEGS),
+            "P1/P2 (banane)" if config.COURSE_NUMBER == 1 else "Z1/Z2 (côtier)",
+        )
+        if config.is_essai():
+            self.log.info(
+                "Vent ESSAI fixe : %.0f° / %.1f m/s",
+                config.WIND_ESSAI_DIR_DEG, config.WIND_ESSAI_SPEED_MS,
+            )
+        else:
+            self.log.info(
+                "Vent fallback (si orga muette) : %.0f° / %.1f m/s",
+                config.WIND_FALLBACK_DIR_DEG, config.WIND_FALLBACK_SPEED_MS,
+            )
         self.log.info("RTK radius=%.1f m / GPS radius=%.1f m",
                       config.CAPTURE_RADIUS_RTK, config.CAPTURE_RADIUS_GPS)
+        self.log.info(
+            "Réseau LoRa BATTLEBOATS : émission P|%s|… toutes les %.0fs "
+            "(slot TDMA T+%.0fs)",
+            config.DRONE_ID, config.LORA_BROADCAST_POSITION_PERIOD_S,
+            (config.DRONE_NUM - 1) * 30.0,
+        )
+        if config.is_regate():
+            self.log.info(
+                "Réseau LoRa : écoute W|… (orga) + P|… (alliés UTT + 9 ennemis)"
+            )
+        else:
+            self.log.info(
+                "Réseau LoRa : écoute alliés UTT seulement (ennemis et W| orga "
+                "filtrés en mode ESSAI)"
+            )
         self.log.info("=" * 60)
 
         # MAVLink (obligatoire)
@@ -174,13 +223,24 @@ class StormWingsApp:
     # Callbacks LoRa
     # ─────────────────────────────────────────────
     def _on_wind_received(self, msg):
+        """W|… orga reçu via LoRa → relayé au wind_estimator de la stack nav.
+
+        Cette donnée alimente la stratégie de cap (VMG, lay-lines), donc on
+        log explicitement le passage Pi → modules de navigation.
+        """
         self._last_lora_msg_t = time.monotonic()
-        self.wind.push_calypso(
+        self.wind.push_orga_wind(
             direction_deg=msg.direction_deg,
             speed_ms=msg.speed_ms,
             timestamp=msg.timestamp,
             sensor_offline=msg.sensor_offline,
         )
+        if config.is_regate() and not msg.sensor_offline:
+            self.log.info(
+                "[LORA-NET] WIND orga → nav stack : %d°/%.1fm/s "
+                "(ts=%d) — utilisé pour VMG et lay-lines",
+                msg.direction_deg, msg.speed_ms, msg.timestamp,
+            )
 
     def _on_position_received(self, msg):
         """Callback LoRa : un voisin (allié ou ennemi) annonce sa position."""
@@ -270,17 +330,21 @@ class StormWingsApp:
         # ===== 4. BASCULE MANUEL/AUTO =====
         mode_status = self.mode_switch.update()
 
+        # Quand on quitte AUTO (passage MANUAL ou UNKNOWN) et que la course
+        # n'est pas encore démarrée, on remet le compteur loiter à zéro pour
+        # qu'à la prochaine bascule AUTO le décompte reparte de 0.
+        if mode_status.mode != ControlMode.AUTO and not self.course.race_started:
+            self._auto_pre_start_t = 0.0
+
         # ===== 5. ROUTAGE ÉTAT NAVIGATION =====
         if mode_status.mode == ControlMode.MANUAL:
-            self.nav_sm.transition(NavState.REPRISE_RC, "ch3 haut")
+            self.nav_sm.transition(NavState.REPRISE_RC, "levier mode haut")
             self._update_self_state(boat_pos, tlm)
-            # Si une pénalité est active, le manager doit savoir que le
-            # pilote a bien pris la main (sous-état MANUAL)
             if self.penalty.is_active and tlm.has_gps_fix:
                 self.penalty.update(boat_pos, control_mode_is_manual=True,
                                     rtk_fixed=rtk_fixed)
         elif mode_status.mode == ControlMode.UNKNOWN:
-            self.nav_sm.transition(NavState.ATTENTE, "ch3 inconnu")
+            self.nav_sm.transition(NavState.ATTENTE, "levier mode inconnu")
             self.mav.clear_all_overrides()
         else:
             # AUTO
@@ -295,6 +359,11 @@ class StormWingsApp:
         # ===== 7. COMM LORA =====
         self._comm_step(tlm, now)
 
+        # ===== 7bis. SNAPSHOT TACTIQUE (toutes les 5 s) =====
+        if now - self._last_tactical_eval_t >= 5.0 and tlm.has_gps_fix:
+            self._tactical_step(boat_pos, tlm, now)
+            self._last_tactical_eval_t = now
+
         # ===== 8. LOGGING =====
         self._log_step(tlm, wind_est, deg, now)
 
@@ -303,9 +372,22 @@ class StormWingsApp:
     # ─────────────────────────────────────────────
     def _auto_step(self, boat_pos: GPSPos, tlm, wind_est, rtk_fixed: bool,
                    now: float):
+        # Premier tick AUTO pré-départ : on stocke le timestamp pour compter
+        # les RACE_START_OFFSET_S secondes (utile pour le loiter U1B2)
+        if not self.course.race_started and self._auto_pre_start_t == 0.0:
+            self._auto_pre_start_t = now
+            self.log.info(
+                "[NAV] Top AUTO pré-départ — départ effectif dans %.0fs",
+                config.RACE_START_OFFSET_S,
+            )
+
         # Mise à jour de l'état du parcours (rayon adaptatif RTK/GPS)
         if tlm.has_gps_fix:
-            self.course.update_and_validate(boat_pos, rtk_fixed=rtk_fixed)
+            self.course.update_and_validate(
+                boat_pos,
+                rtk_fixed=rtk_fixed,
+                wind_dir_deg=wind_est.direction_deg if wind_est.confident else None,
+            )
             self._update_self_state(boat_pos, tlm)
 
         # Réévaluation du rôle
@@ -325,8 +407,6 @@ class StormWingsApp:
                 )
                 self.penalty.reset()
             elif pst.target_pos is not None:
-                # On pilote vers la bouée pénalité (réutilise la même chaîne
-                # VMG/anti-collision/PID que le parcours normal)
                 self._navigate_to(
                     boat_pos=boat_pos,
                     waypoint=pst.target_pos,
@@ -343,14 +423,25 @@ class StormWingsApp:
             self.mav.set_sail_percent(50.0)
             return
 
-        # Pas encore démarrée ?
+        # ── Pré-départ : selon le profil drone, idle ou loiter circle ──
         if not self.course.race_started:
-            self.nav_sm.transition(NavState.ATTENTE, "pré-départ")
-            self._auto_idle(tlm, wind_est)
-            return
+            elapsed_pre_start = now - self._auto_pre_start_t
+            # Pendant les RACE_START_OFFSET_S premières secondes, U1B2 fait
+            # un cercle pour laisser U1B1 partir devant et écouter ses data.
+            if (config.RACE_START_OFFSET_S > 0
+                    and elapsed_pre_start < config.RACE_START_OFFSET_S
+                    and tlm.has_gps_fix):
+                self.nav_sm.transition(
+                    NavState.ATTENTE,
+                    f"loiter pré-départ (T+{elapsed_pre_start:.0f}/{config.RACE_START_OFFSET_S:.0f}s)",
+                )
+                self._loiter_circle(boat_pos, tlm, wind_est, now)
+                return
+            # Sinon : on cap vers la porte de départ (logique normale)
+            # → on tombe dans le path navigation classique avec la 1ère leg
 
         # ── PRIORITÉ 2 — stall (blocage comportemental) ──
-        plan = self.course.plan(boat_pos)
+        plan = self.course.plan(boat_pos, wind_dir_deg=wind_est.direction_deg)
         if plan is None:
             self.log.warning("Pas de plan disponible")
             return
@@ -364,6 +455,11 @@ class StormWingsApp:
                                    f"stall {stall_status.level.value}")
             self._handle_stall(stall_status, plan, boat_pos, tlm, wind_est, now)
             return
+
+        # Si on n'a pas encore franchi la porte de départ, on log que
+        # c'est le moment de le faire (informatif)
+        if not self.course.race_started:
+            self.nav_sm.transition(NavState.ATTENTE, "cap vers porte départ")
 
         # ── PRIORITÉ 3 — navigation normale vers le waypoint ──
         self._navigate_to(
@@ -495,10 +591,62 @@ class StormWingsApp:
             )
 
     def _auto_idle(self, tlm, wind_est):
-        """En attente de départ : safran droit, voile mi-position."""
+        """En attente de départ (drone Scout U1B1) : safran droit, voile mi-position."""
         self.mav.set_rudder_pwm(config.RUDDER_PWM_TRIM)
         self.mav.set_sail_percent(60.0)
         self._last_rudder_cmd_deg = 0.0
+
+    def _loiter_circle(self, boat_pos: GPSPos, tlm, wind_est, now: float):
+        """Loiter circle 50 m derrière la porte de départ pendant
+        RACE_START_OFFSET_S secondes (utilisé par U1B2 — Optimizer).
+
+        Fait tourner le drone autour d'un point fixe situé en arrière de la
+        porte de départ, à LOITER_BEHIND_GATE_M mètres dans la direction
+        opposée à la 2e étape du parcours. Le rayon est LOITER_RADIUS_M et
+        la période complète LOITER_TURN_PERIOD_S.
+
+        Pendant ce temps, le drone reçoit ≥ 1 broadcast LoRa du Scout
+        (U1B1) qui transmet sa position et son vent réel ressenti, ce qui
+        permet d'ajuster la polaire avant de franchir la porte.
+        """
+        # 1. Calculer le centre du loiter : 50 m derrière la porte de départ
+        gate_leg = self.course.legs[0]   # première étape = porte départ
+        gate_center = geo_utils.buoy_gps(gate_leg.buoy)
+
+        # Direction "vers la 2e étape" = sens de course après le départ
+        if len(self.course.legs) > 1:
+            next_leg = self.course.legs[1]
+            next_pos = geo_utils.buoy_gps(next_leg.buoy)
+            de, dn = geo_utils.offset_meters(gate_center, next_pos)
+            norm = math.hypot(de, dn)
+            if norm > 1e-3:
+                # Centre loiter = porte - LOITER_BEHIND_GATE_M dans la direction de la 2e étape
+                ue, un = de / norm, dn / norm
+                loiter_center = geo_utils.move_meters(
+                    gate_center,
+                    -ue * config.LOITER_BEHIND_GATE_M,
+                    -un * config.LOITER_BEHIND_GATE_M,
+                )
+            else:
+                loiter_center = gate_center
+        else:
+            loiter_center = gate_center
+
+        # 2. Position cible mobile sur le cercle (rotation horaire à période fixe)
+        elapsed = now - self._auto_pre_start_t
+        angle = 2.0 * math.pi * (elapsed / config.LOITER_TURN_PERIOD_S)
+        target_e = config.LOITER_RADIUS_M * math.sin(angle)
+        target_n = config.LOITER_RADIUS_M * math.cos(angle)
+        loiter_target = geo_utils.move_meters(loiter_center, target_e, target_n)
+
+        # 3. Naviguer vers ce point mobile (la chaîne VMG/PID s'occupe du reste)
+        self._navigate_to(
+            boat_pos=boat_pos,
+            waypoint=loiter_target,
+            final_pos=loiter_center,   # le centre du loiter est notre référence
+            tlm=tlm, wind_est=wind_est, now=now,
+            label=f"loiter_pre_start ({elapsed:.0f}/{config.RACE_START_OFFSET_S:.0f}s)",
+        )
 
     def _update_self_state(self, boat_pos: GPSPos, tlm):
         self.roles.update_self(
@@ -568,23 +716,53 @@ class StormWingsApp:
         self.penalty.start(interrupted_leg_idx=self.course.current_idx)
 
     # ─────────────────────────────────────────────
-    # Communication LoRa
+    # Tactique — exploitation des positions LoRa reçues
     # ─────────────────────────────────────────────
+    def _tactical_step(self, boat_pos: GPSPos, tlm, now: float):
+        if self.lora is None:
+            return
+        team = self.lora.get_team_neighbors()
+        # En ESSAI les ennemis sont filtrés à la réception → dict vide.
+        enemies = self.lora.get_enemy_neighbors()
+
+        plan = self.course.plan(boat_pos)
+        target = plan.target_pos if plan else boat_pos
+        self._tactical = tactical_compute(
+            boat_pos=boat_pos,
+            heading_deg=tlm.heading_deg,
+            target_pos=target,
+            team_neighbors=team,
+            enemy_neighbors=enemies,
+        )
+        log_snapshot(self._tactical)
+
+    # ─────────────────────────────────────────────
+    # Communication LoRa — broadcast P|... toutes les 60 s
+    # ─────────────────────────────────────────────
+    # OBLIGATION RÉGLEMENTAIRE (cf. PDF §3.3) : l'émission DOIT continuer
+    # quel que soit le mode de navigation (MANUAL/AUTO/PENALITE) et même
+    # sans fix GPS (P|<id>|0|0|0|0). Cette méthode est appelée à chaque
+    # tick, c'est le TDMA scheduler qui gère la cadence 60 s.
     def _comm_step(self, tlm, now: float):
         if self.lora is None:
             return
         if not self.tdma.should_transmit():
             return
         try:
-            self.lora.broadcast_position(
+            ok = self.lora.broadcast_position(
                 lat=tlm.lat,
                 lon=tlm.lon,
                 heading_deg=tlm.heading_deg,
                 speed_ms=tlm.ground_speed_ms,
                 has_fix=tlm.has_gps_fix,
             )
+            if not ok:
+                self.log.warning(
+                    "[LORA-NET] Broadcast P|… échoué (link down ?) — "
+                    "risque de pénalité sportive"
+                )
         except Exception as e:
-            self.log.warning("LoRa broadcast échoué : %s", e)
+            self.log.warning("[LORA-NET] Exception broadcast P|… : %s", e)
 
     # ─────────────────────────────────────────────
     # Logging
@@ -595,12 +773,14 @@ class StormWingsApp:
             boat_pos_gps = (
                 (tlm.lat, tlm.lon) if tlm.has_gps_fix else (0.0, 0.0)
             )
-            plan = self.course.plan(boat_pos_gps)
+            plan = self.course.plan(boat_pos_gps, wind_dir_deg=wind_est.direction_deg)
             if tlm.has_gps_fix:
                 east, north = geo_utils.gps_to_local(tlm.lat, tlm.lon)
             else:
                 east, north = 0.0, 0.0
             row = {
+                "mode": config.MODE,
+                "course_n": config.COURSE_NUMBER,
                 "nav_state": self.nav_sm.state.value,
                 "control_mode": self.mode_switch.update().mode.value
                 if self.mode_switch else "?",
@@ -633,6 +813,13 @@ class StormWingsApp:
                 "neighbors_count": len(
                     self.lora.get_team_neighbors() if self.lora else {}
                 ),
+                "enemies_total": self._tactical.enemies_total,
+                "enemies_ahead": self._tactical.enemies_ahead,
+                "enemies_close": self._tactical.enemies_close,
+                "blocked_target": int(self._tactical.blocked_target),
+                "lora_tx_pos": self.lora.tx_pos_count if self.lora else 0,
+                "lora_rx_pos": self.lora.rx_pos_count if self.lora else 0,
+                "lora_rx_wind": self.lora.rx_wind_count if self.lora else 0,
                 "degraded_modes": "|".join(m.value for m in deg.active_modes),
             }
             self.flight_log.log(row)

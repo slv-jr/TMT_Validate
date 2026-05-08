@@ -1,5 +1,5 @@
 """
-Simulateur 2D simple du parcours N°3 (sans matériel).
+Simulateur 2D simple du parcours actif sélectionné par COURSE_NUMBER (sans matériel).
 
 Permet de vérifier que la stack logicielle (waypoints + VMG + layline +
 champ de potentiel) génère une trajectoire COHÉRENTE avant les essais
@@ -77,7 +77,7 @@ class SimBoat:
 
 def simulate(wind_dir: float, wind_speed: float, max_time_s: float = 1800.0,
              plot: bool = True):
-    print(f"=== Simulation parcours N°3 ===")
+    print(f"=== Simulation parcours N°{config.COURSE_NUMBER} ===")
     print(f"Vent : {wind_dir}° à {wind_speed:.1f} m/s")
     print(f"Drone : {config.DRONE_ID} | Bouées : {list(config.BUOYS_GPS)}")
 
@@ -206,7 +206,7 @@ def simulate(wind_dir: float, wind_speed: float, max_time_s: float = 1800.0,
         ax.set_xlabel("East (m) — vue locale", color="white")
         ax.set_ylabel("North (m) — vue locale", color="white")
         ax.set_title(
-            f"Simulation Parcours N°3 — {config.DRONE_ID} (runtime en GPS)",
+            f"Simulation Parcours N°{config.COURSE_NUMBER} — {config.DRONE_ID} (runtime en GPS)",
             color="white", fontsize=12,
         )
         ax.tick_params(colors="white")

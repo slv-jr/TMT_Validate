@@ -4,14 +4,37 @@ Interface avec l'ESP32 LoRa V3 (Meshtastic) via port série USB.
 L'ESP32 doit avoir été flashé Meshtastic et configuré par l'organisation
 sur le canal BATTLEBOATS (cf. BATTLEBOATS_LORA_PROTOCOL_v5.pdf §1).
 
-On utilise la lib `meshtastic` Python qui parle au firmware via le port
-série. Elle expose :
-    - sendText(text)                    pour broadcaster un message
-    - on_receive(packet) callback       pour recevoir
-    - on_connection callback            pour suivre l'état de la liaison
+CHAÎNE COMPLÈTE :
+    Cube Orange → MAVLink → Pi → LoRaInterface.broadcast_position()
+                                  ↓
+                                  meshtastic.sendText("P|U1B1|<lat>|<lon>|<hdg>|<spd>")
+                                  ↓
+                                  ESP32 → 868 MHz → tous les nœuds BATTLEBOATS
 
-Ce module wrappe ces APIs pour exposer une interface simple à la boucle
-principale, avec callbacks pour PositionMessage et WindMessage.
+    Réseau   → ESP32 → meshtastic on_receive callback
+                       ↓
+                       LoRaInterface._handle_text(text)
+                       ├── "W|..." → wind_estimator.push_orga_wind()
+                       └── "P|..." → roles.update_teammate (UTT)
+                                   ↘ _last_adversary_pos  (ennemis)
+
+OBLIGATIONS PROTOCOLE (cf. PDF §3.3) :
+    - Chaque bateau émet P|<id>|... toutes les 60 s, point.
+    - Même sans fix GPS, on émet P|<id>|0|0|0|0 pour rester visible.
+    - L'émission continue indépendamment du mode (MANUAL, AUTO, PENALITE).
+    - Un bateau qui n'émet pas est pénalisé.
+
+FILTRAGE selon config.MODE
+    REGATE : on accepte tous les messages (alliés UTT, ennemis, WIND orga).
+             - Coéquipiers UTT → coordination de l'essaim
+             - Ennemis → anti-collision + exploitation tactique
+             - WIND orga → source météo principale (cf. wind_estimator)
+
+    ESSAI  : on filtre pour ne garder que les coéquipiers UTT.
+             - Messages des ennemis → IGNORÉS (test sans course)
+             - Messages WIND orga → IGNORÉS (le vent vient de WIND_ESSAI_*)
+             - Coéquipiers UTT → acceptés (les 2 drones se parlent entre eux)
+             - On ÉMET QUAND MÊME nos P|... pour valider la chaîne radio
 """
 
 import logging
@@ -90,6 +113,14 @@ class LoRaInterface:
         self._lock = threading.Lock()
         self._last_tx_t: float = 0.0
 
+        # Compteurs réseau — utiles pour vérifier la santé radio en cours
+        # de course (tx_pos = nb de P| émis, rx_pos = reçus, rx_wind = W| reçus)
+        self.tx_pos_count: int = 0
+        self.rx_pos_count: int = 0
+        self.rx_wind_count: int = 0
+        self.last_pos_tx_text: str = ""
+        self.last_wind_rx_text: str = ""
+
     # ─────────────────────────────────────────────
     # Connexion
     # ─────────────────────────────────────────────
@@ -163,6 +194,16 @@ class LoRaInterface:
             # On filtre nos propres broadcasts (au cas où Meshtastic les renvoie)
             if msg.boat_id == self.boat_id:
                 return
+
+            # Filtre ESSAI : on ignore les messages des bateaux ennemis
+            # (tests réalisés en autonomie avec les seuls drones UTT).
+            if config.is_essai() and config.is_enemy(msg.boat_id):
+                log.debug("[LoRa-RX] POS %s ignorée (mode ESSAI)", msg.boat_id)
+                return
+
+            self.rx_pos_count += 1
+            is_team = config.is_teammate(msg.boat_id)
+            tag = "ALLIÉ" if is_team else "ENNEMI" if config.is_enemy(msg.boat_id) else "?"
             with self._lock:
                 ns = self.neighbors.get(msg.boat_id)
                 if ns is None:
@@ -174,9 +215,11 @@ class LoRaInterface:
                 ns.speed_knots = msg.speed_knots
                 ns.has_fix = not msg.no_fix
                 ns.last_seen_t = now
-            log.debug("[LoRa-RX] POS %s → %.5f,%.5f hdg=%d spd=%.1fkn",
-                      msg.boat_id, msg.lat, msg.lon,
-                      msg.heading_deg, msg.speed_knots)
+            log.info(
+                "[LoRa-RX] POS %s [%s] → %.5f,%.5f hdg=%d spd=%.1fkn (rx#%d)",
+                msg.boat_id, tag, msg.lat, msg.lon,
+                msg.heading_deg, msg.speed_knots, self.rx_pos_count,
+            )
             if self.on_position:
                 try:
                     self.on_position(msg)
@@ -184,14 +227,29 @@ class LoRaInterface:
                     log.warning("[LoRa] on_position cb err : %s", e)
 
         elif isinstance(msg, protocol.WindMessage):
+            # Filtre ESSAI : on ignore le WIND orga (le vent vient de
+            # WIND_ESSAI_DIR_DEG / WIND_ESSAI_SPEED_MS dans config).
+            if config.is_essai():
+                log.debug("[LoRa-RX] WIND orga ignoré (mode ESSAI)")
+                return
+
+            self.rx_wind_count += 1
+            self.last_wind_rx_text = (
+                f"W|{msg.direction_deg:03d}|{int(round(msg.speed_ms*10)):02d}|"
+                f"{msg.timestamp}"
+            )
             with self._lock:
                 self.wind.direction_deg = msg.direction_deg
                 self.wind.speed_ms = msg.speed_ms
                 self.wind.timestamp = msg.timestamp
                 self.wind.last_received_t = now
                 self.wind.sensor_offline = msg.sensor_offline
-            log.info("[LoRa-RX] WIND dir=%d° spd=%.1fm/s offline=%s",
-                     msg.direction_deg, msg.speed_ms, msg.sensor_offline)
+            log.info(
+                "[LoRa-RX] WIND #%d dir=%d° spd=%.1fm/s offline=%s "
+                "→ relayé au wind_estimator (Pi/Cube)",
+                self.rx_wind_count,
+                msg.direction_deg, msg.speed_ms, msg.sensor_offline,
+            )
             if self.on_wind:
                 try:
                     self.on_wind(msg)
@@ -216,10 +274,40 @@ class LoRaInterface:
 
     def broadcast_position(self, lat: float, lon: float, heading_deg: float,
                            speed_ms: float, has_fix: bool) -> bool:
+        """Émet un MSG_POS (P|...) sur le canal BATTLEBOATS.
+
+        Format strictement conforme à BATTLEBOATS_LORA_PROTOCOL_v5.pdf §3.3 :
+            P|<id>|<lat×1e5>|<lon×1e5>|<hdg_3d>|<spd_kn×10_2d>
+
+        Si pas de fix : on envoie quand même P|<id>|0|0|0|0 pour rester
+        visible du réseau (c'est imposé par le règlement).
+        """
         msg = protocol.build_position_from_telemetry(
             self.boat_id, lat, lon, heading_deg, speed_ms, has_fix,
         )
-        return self.send_text(msg.encode())
+        text = msg.encode()
+        ok = self.send_text(text)
+        if ok:
+            self.tx_pos_count += 1
+            self.last_pos_tx_text = text
+            log.info(
+                "[LoRa-TX] POS #%d → %s (mode=%s, fix=%s)",
+                self.tx_pos_count, text, config.MODE,
+                "GPS" if has_fix else "NO_FIX",
+            )
+        return ok
+
+    def network_stats(self) -> Dict[str, int]:
+        """Compteurs réseau (utile pour le log CSV et le diagnostic terrain)."""
+        with self._lock:
+            return {
+                "tx_pos": self.tx_pos_count,
+                "rx_pos": self.rx_pos_count,
+                "rx_wind": self.rx_wind_count,
+                "neighbors_active": sum(
+                    1 for ns in self.neighbors.values() if not ns.is_stale()
+                ),
+            }
 
     # ─────────────────────────────────────────────
     # Lectures pour la boucle principale
@@ -251,3 +339,12 @@ class LoRaInterface:
         """Coéquipiers UTT actifs (utile pour la coordination d'essaim)."""
         all_ = self.get_active_neighbors()
         return {bid: ns for bid, ns in all_.items() if config.is_teammate(bid)}
+
+    def get_enemy_neighbors(self) -> Dict[str, NeighborState]:
+        """Bateaux adverses actifs (anti-collision et tactique).
+
+        En mode ESSAI ce dictionnaire est toujours vide car les messages
+        des ennemis sont rejetés à la réception.
+        """
+        all_ = self.get_active_neighbors()
+        return {bid: ns for bid, ns in all_.items() if config.is_enemy(bid)}

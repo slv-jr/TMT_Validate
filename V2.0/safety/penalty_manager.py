@@ -1,20 +1,30 @@
 """
-Gestion d'une pénalité (cf. README2 §"Pénalité — Mode AUTO et MANUEL").
+Gestion d'une pénalité (cf. règlement Battleboats 2026 V2.3 §6).
 
-Le règlement BattleBoats 2026 impose, en cas de pénalité notifiée :
-    1. Aller vers Z1 (passage A → Z1)
-    2. Enrouler Z2 par BÂBORD
-    3. Enrouler Z1 par BÂBORD
+La séquence de pénalité dépend du parcours actif (config.COURSE_NUMBER) :
+
+    Parcours 1 (banane) :
+        1. Passer entre 2 et P1 (vers P1)
+        2. Enrouler P2 par BÂBORD
+        3. Enrouler P1 par BÂBORD
+    Parcours 2 (côtier court) :
+        1. Passer entre A et Z1 (vers Z1)
+        2. Enrouler Z2 par BÂBORD
+        3. Enrouler Z1 par BÂBORD
     4. Reprendre le parcours là où on l'avait laissé.
+
+La séquence de bouées correspondante (P1/P2 ou Z1/Z2) est déjà
+sélectionnée dynamiquement via `config.PENALTY_LEGS`. Ce module n'a
+donc pas besoin de connaître le parcours — il suit la séquence active.
 
 Politique de bascule (cf. README2) :
     - Au déclenchement d'une pénalité : on entre en sous-état `WAIT`.
     - Pendant `PENALTY_DECISION_TIMEOUT_S` (5 s) le pilote peut basculer
       le levier de mode (config.CH_MODE) en HAUT (MANUEL) — alors le
       sous-état devient `MANUAL` et l'auto cède. L'opérateur est limité
-      à `PENALTY_MANUAL_MAX_S` (30 s) puis l'auto reprend (règlement §3.4).
+      à `PENALTY_MANUAL_MAX_S` (30 s) puis l'auto reprend (règlement §6).
     - Si le pilote ne bascule pas → sous-état `AUTO` : on enchaîne la
-      séquence Z1/Z2/Z1.
+      séquence automatique.
 
 À la fin de la séquence (auto ou manuelle), le PenaltyManager retourne
 `finished=True` et `main.py` rebascule sur l'étape de course interrompue.
@@ -144,9 +154,10 @@ class PenaltyManager:
             elif (now - self._t0) >= config.PENALTY_DECISION_TIMEOUT_S:
                 self._mode = PenaltyMode.AUTO
                 self._mode_start_t = now
+                seq = " → ".join(f"{leg.buoy} {leg.side}" for leg in self._legs)
                 log.warning(
-                    "[PENALTY] Timeout %.0fs → séquence AUTO (Z1 → Z2 bâbord → Z1 bâbord)",
-                    config.PENALTY_DECISION_TIMEOUT_S,
+                    "[PENALTY] Timeout %.0fs → séquence AUTO (%s)",
+                    config.PENALTY_DECISION_TIMEOUT_S, seq,
                 )
 
         # ── Sous-état MANUAL : limiter à 30 s puis reprendre auto ──

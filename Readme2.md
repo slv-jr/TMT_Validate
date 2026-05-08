@@ -233,7 +233,7 @@ Blocage > 15 s  → alerte buzzer + proposer reprise RC
 - [ ] Charger `ardupilot_params.txt` sur les 3 Cubes
 
 **J0 matin (9 mai)**
-- [ ] Briefing 9h30 → coordonnées bouées A B C D E F G Z1 Z2
+- [ ] Briefing 9h30 → coordonnées bouées (parcours 1 : 1 2 3 4 P1 P2 / parcours 2 : A B C D E Z1 Z2)
 - [ ] `tools/buoy_entry.py` → validation + distances → `config.BUOYS_GPS`
 - [ ] Fix RTK établi (fix_type=6) sur les 3 drones
 - [ ] Batteries rechange chargées (3 courses requises)

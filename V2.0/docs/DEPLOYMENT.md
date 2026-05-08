@@ -2,23 +2,23 @@
 
 > **Objectif** : t'amener du carton ouvert le J-7 à la course du 9 mai dans l'ordre **exact** des opérations, avec les commandes à copier-coller. Chaque section indique sur quelle machine tu travailles : `[PC]`, `[Pi]` ou `[Mission Planner]`.
 
-À répéter pour chaque drone (U1B1, U1B2, U1B3) — la seule chose qui change est le `DRONE_ID`.
+À répéter pour chaque drone (U1B1, U1B2 — régate à **2 drones**) — la seule chose qui change au lancement est `DRONE_ID`. Le code supporte 2 parcours (`COURSE_NUMBER=1` banane / `=2` côtier court) et 2 modes opératoires (`STORMWINGS_MODE=ESSAI/REGATE`) sélectionnés via variables d'environnement.
 
 ---
 
 ## Vue d'ensemble : 7 phases
 
 ```
-PHASE 1 ─ Préparation des Raspberry Pi (PC, ~30 min × 3)
-PHASE 2 ─ Câblage du drone (1h × 3 = 3h)
-PHASE 3 ─ Configuration ArduPilot via Mission Planner (45 min × 3)
-PHASE 4 ─ Déploiement du code sur les Pi (15 min × 3)
-PHASE 5 ─ Tests au sol (bench, bateau hors de l'eau) (1h × 3)
+PHASE 1 ─ Préparation des Raspberry Pi (PC, ~30 min × 2)
+PHASE 2 ─ Câblage du drone (1h × 2 = 2h)
+PHASE 3 ─ Configuration ArduPilot via Mission Planner (45 min × 2)
+PHASE 4 ─ Déploiement du code sur les Pi (15 min × 2)
+PHASE 5 ─ Tests au sol (bench, bateau hors de l'eau) (1h × 2)
 PHASE 6 ─ J-1 : entraînement sur l'eau, calibrations (4h)
 PHASE 7 ─ J0 : matin de course
 ```
 
-Compte **2 jours pleins** pour les phases 1-5 si tu pars de zéro. **Ne saute pas** les tests au sol, c'est ce qui fait gagner la course.
+Compte **1.5 jours pleins** pour les phases 1-5 (régate à 2 drones). **Ne saute pas** les tests au sol, c'est ce qui fait gagner la course.
 
 ---
 
@@ -36,7 +36,7 @@ Sur ton PC, télécharger **Raspberry Pi Imager** : https://www.raspberrypi.com/
 
 Cliquer sur la roue dentée **AVANT** d'écrire :
 
-- **Set hostname** : `stormwings-u1b1` (puis `u1b2`, `u1b3`)
+- **Set hostname** : `stormwings-u1b1` (puis `u1b2`)
 - **Enable SSH** : ✅ + créer utilisateur `admin` avec mot de passe robuste
 - **Configure WiFi** : ton réseau local (pour la phase 1 uniquement)
 - **Locale** : Europe/Paris, clavier fr
@@ -98,7 +98,7 @@ Le script `install.sh` :
 # Sur U1B1 :
 sudo mkdir -p /etc/stormwings
 echo 'DRONE_ID=U1B1' | sudo tee /etc/stormwings/drone_id.env
-# Sur U1B2 → DRONE_ID=U1B2  ;  sur U1B3 → DRONE_ID=U1B3
+# Sur U1B2 → DRONE_ID=U1B2
 ```
 
 ### 1.7. Vérification rapide
@@ -111,7 +111,7 @@ DRONE_ID=U1B1 python3 config.py
 # → doit afficher la config du drone
 ```
 
-✅ **Phase 1 terminée** : SD flashée, SSH OK, dépôt cloné, code installé, DRONE_ID fixé. Répéter pour les 2 autres Pi.
+✅ **Phase 1 terminée** : SD flashée, SSH OK, dépôt cloné, code installé, DRONE_ID fixé. Répéter pour le 2e Pi.
 
 ---
 
@@ -460,18 +460,34 @@ sudo nano ~/code/stormwings/V2.0/config.py
 sudo systemctl restart stormwings
 ```
 
-### 6.6. Test essaim 3 drones simultanés — 1h
+### 6.6. Test essaim 2 drones simultanés — 1h
 
-Lancer les 3 drones en eau libre. Vérifier dans les logs :
-- Chaque drone voit les 2 autres en `[LoRa-RX] POS ...`
+Lancer les 2 drones en eau libre. Vérifier dans les logs :
+- Chaque drone voit l'autre en `[LoRa-RX] POS ...`
 - Pas de collision en approche bouée (le `potential_field.py` doit les écarter)
-- Les rôles se réattribuent dynamiquement (`[ROLES] ...`)
+- Le rôle Scout/Optimizer s'attribue selon la progression (`[ROLES] ...`)
+- U1B2 fait bien un cercle pré-départ (logs `[NAV] loiter pré-départ`)
 
-### 6.7. Test séquence pénalité — 30 min
+### 6.7. Test stratégie 2 drones (loiter U1B2) — 30 min
+
+Mettre les 2 drones en zone de départ, basculer simultanément en AUTO :
+- U1B1 doit cap directement vers la porte
+- U1B2 doit tourner en cercle 50 m derrière la porte pendant 30 s
+- À T+30 s, U1B2 quitte le cercle et fonce vers la porte
+
+```bash
+# [Pi] U1B1
+DRONE_ID=U1B1 STORMWINGS_MODE=ESSAI COURSE_NUMBER=2 python3 main.py
+
+# [Pi] U1B2 (en parallèle dans une autre session)
+DRONE_ID=U1B2 STORMWINGS_MODE=ESSAI COURSE_NUMBER=2 python3 main.py
+```
+
+### 6.8. Test séquence pénalité — 30 min
 
 ```bash
 # [Pi] — sur un drone
-# Forcer une pénalité via Python (à intégrer ou mettre une touche RC)
+# Forcer une pénalité via Python
 DRONE_ID=U1B1 python3 -c "
 import time
 from main import StormWingsApp
@@ -483,9 +499,13 @@ app.run()
 "
 ```
 
-Le drone doit aller automatiquement faire le tour Z1 → Z2 → Z1 puis reprendre.
+Le drone doit aller automatiquement faire le tour de pénalité :
+- Parcours 1 (banane) : P1 → P2 bâbord → P1 bâbord
+- Parcours 2 (côtier court) : Z1 → Z2 bâbord → Z1 bâbord
 
-✅ **Phase 6 terminée** : les 3 drones naviguent en autonomie, polaire calibrée, pénalité validée. **Tu es prêt pour le 9 mai**.
+À tester pour les 2 types de parcours.
+
+✅ **Phase 6 terminée** : les 2 drones naviguent en autonomie, polaire calibrée, pénalité validée pour banane ET côtier, loiter pré-départ OK. **Tu es prêt pour le 9 mai**.
 
 ---
 
@@ -493,27 +513,38 @@ Le drone doit aller automatiquement faire le tour Z1 → Z2 → Z1 puis reprendr
 
 ### 7.1. Briefing organisateurs (~9h30)
 
-Récupérer les coordonnées GPS officielles des 9 bouées. Format probable : décimal ou DMS.
+Récupérer :
+1. Le **numéro du parcours** retenu pour la course (1 ou 2) → définit `COURSE_NUMBER`
+2. Les **coordonnées GPS officielles** des bouées (format probable : décimal ou DMS) :
+   - Parcours 1 : 1, 2, 3, 4, P1, P2 (6 bouées)
+   - Parcours 2 : A, B, C, D, E, Z1, Z2 (7 bouées)
+3. La **prévision météo** pour régler `WIND_FALLBACK_DIR_DEG` / `WIND_FALLBACK_SPEED_MS`
 
-### 7.2. Saisie des bouées sur les 3 Pi
+### 7.2. Saisie des bouées sur les 2 Pi
 
 Sur chaque Pi (un seul suffit si tu fais un scp ensuite) :
 
 ```bash
 # [Pi]
 cd ~/code/stormwings/V2.0
-sudo BUOYS_OVERRIDE_PATH=/etc/stormwings/buoys_today.json python3 -m tools.buoy_entry
+# Saisir uniquement les bouées du parcours actif
+sudo COURSE_NUMBER=2 BUOYS_OVERRIDE_PATH=/etc/stormwings/buoys_today.json \
+    python3 -m tools.buoy_entry
+
+# OU saisir toutes les bouées des 2 parcours d'un coup (utile si tu veux pouvoir
+# changer de parcours sans ressaisir)
+sudo BUOYS_OVERRIDE_PATH=/etc/stormwings/buoys_today.json \
+    python3 -m tools.buoy_entry --all
 ```
 
 Le script t'affiche chaque bouée, tu colles ses coordonnées (le format décimal `43.0967 5.9533` et DMS `43°05.802'N 5°57.171'E` sont reconnus). À la fin : récap avec les distances entre bouées (sanity check).
 
-Ensuite, **diffuser le fichier sur les 2 autres Pi** :
+Ensuite, **diffuser le fichier sur le 2e Pi** :
 
 ```bash
 # [Pi1]
 scp /etc/stormwings/buoys_today.json admin@stormwings-u1b2.local:/tmp/buoys_today.json
 ssh admin@stormwings-u1b2.local 'sudo mv /tmp/buoys_today.json /etc/stormwings/'
-# Idem pour U1B3
 ```
 
 ### 7.3. Pré-vol final
@@ -523,25 +554,51 @@ Sur **chaque drone** :
 ```bash
 # [Pi]
 DRONE_ID=U1B1 python3 -m tests.test_rtk          # fix RTK confirmé
+
+# Vérifier que la config est bonne pour le parcours du jour :
+DRONE_ID=U1B1 STORMWINGS_MODE=REGATE COURSE_NUMBER=2 python3 config.py
+# → doit afficher : MODE=REGATE COURSE=2 + bouées attendues + rôle correct
+
+# Définir les vars d'env pour le service systemd
+sudo nano /etc/stormwings/drone_id.env
+# Ajouter (exemple parcours 2) :
+#   DRONE_ID=U1B1
+#   STORMWINGS_MODE=REGATE
+#   COURSE_NUMBER=2
+#   WIND_FALLBACK_DIR=270
+#   WIND_FALLBACK_SPD=4.5
+
 sudo systemctl restart stormwings
 sudo journalctl -u stormwings -f | head -20
+# Vérifier : "MODE=REGATE — COURSE 2 — démarrage"
 # Vérifier : "Capture radius=4.0 RTK / 7.0 GPS"
 ```
 
 ### 7.4. Mise à l'eau
 
-**Levier 3 positions HAUT** = pilotage RC manuel pour la mise à l'eau. Quand le drone est positionné dans la zone de départ, basculer le **levier en BAS** : le Pi prend la main. Logs :
+**Levier 3 positions HAUT** = pilotage RC manuel pour la mise à l'eau. Quand le drone est positionné dans la zone de départ, basculer le **levier en BAS** : le Pi prend la main.
 
+Logs attendus côté U1B1 (Scout, départ T+0) :
 ```
 [MODE] Bascule MANUAL → AUTO (chan6=950µs)
-[NAV] ATTENTE → REMONTEE_VENT (vmg)
+[NAV] Top AUTO pré-départ — départ effectif dans 0s
+[NAV] ATTENTE → cap vers porte départ
+```
+
+Logs attendus côté U1B2 (Optimizer, départ T+30) :
+```
+[MODE] Bascule MANUAL → AUTO (chan6=950µs)
+[NAV] Top AUTO pré-départ — départ effectif dans 30s
+[NAV] ATTENTE → loiter pré-départ (T+0/30s)
+... 30 secondes plus tard ...
+[NAV] loiter → cap vers porte départ
 ```
 
 ### 7.5. Pendant la course
 
 - Surveiller `journalctl -u stormwings -f` (sur 1 Pi via SSH WiFi terrain)
 - Garder la radio prête pour reprendre la main si nécessaire
-- Si pénalité notifiée par les juges : on a 5 s pour basculer le levier en HAUT — sinon le drone fait le tour Z1/Z2/Z1 tout seul
+- **Pénalité** : pas de signal externe — c'est au pilote de constater une dérive de trajectoire et de basculer le levier en HAUT pour faire le tour à la main, puis remettre AUTO. Limite : 30 s max RC, après quoi l'auto reprend.
 
 ### 7.6. Après la course
 
@@ -550,7 +607,7 @@ Récupérer les CSV de log :
 ```bash
 # [PC]
 scp -r admin@stormwings-u1b1.local:~/code/stormwings/V2.0/logs/ ./logs_U1B1/
-# Idem pour U1B2, U1B3
+scp -r admin@stormwings-u1b2.local:~/code/stormwings/V2.0/logs/ ./logs_U1B2/
 ```
 
 Visualiser :

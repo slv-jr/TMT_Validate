@@ -151,21 +151,31 @@ def dot_2d(v1: Tuple[float, float], v2: Tuple[float, float]) -> float:
 
 
 def buoy_gps(buoy_name: str) -> GPSPos:
-    """Position GPS d'une bouée par son nom (ex: 'C', 'D', 'AB').
+    """Position GPS d'une bouée par son nom (ex: 'C', 'D', 'AB', '12', '34').
 
-    'AB' renvoie le milieu de la porte de départ/arrivée.
+    Pour un nom à 2 caractères composé de bouées valides (ex: 'AB', '12', '34'),
+    retourne le milieu géométrique de la porte. Sinon retourne la bouée
+    individuelle.
     """
-    if buoy_name == "AB":
-        a = config.BUOYS_GPS["A"]
-        b = config.BUOYS_GPS["B"]
-        # Milieu géométrique en GPS (linéarisation valable, distance ~30m)
-        return ((a[0] + b[0]) / 2.0, (a[1] + b[1]) / 2.0)
+    # Cas porte : 2 caractères, chacun est une bouée valide
+    if len(buoy_name) == 2:
+        a_name, b_name = buoy_name[0], buoy_name[1]
+        if a_name in config.BUOYS_GPS and b_name in config.BUOYS_GPS:
+            a = config.BUOYS_GPS[a_name]
+            b = config.BUOYS_GPS[b_name]
+            return ((a[0] + b[0]) / 2.0, (a[1] + b[1]) / 2.0)
     return config.BUOYS_GPS[buoy_name]
 
 
-def gate_endpoints_gps() -> Tuple[GPSPos, GPSPos]:
-    """Coordonnées GPS (A, B) de la porte départ/arrivée."""
-    return config.BUOYS_GPS["A"], config.BUOYS_GPS["B"]
+def gate_endpoints_gps(gate_name: str = "AB") -> Tuple[GPSPos, GPSPos]:
+    """Coordonnées GPS des deux bouées d'une porte (ex: 'AB', '12', '34').
+
+    Args:
+        gate_name: nom de la porte (2 caractères, chacun une bouée valide).
+                   Défaut "AB" (porte départ/arrivée du parcours côtier).
+    """
+    a_name, b_name = gate_name[0], gate_name[1]
+    return config.BUOYS_GPS[a_name], config.BUOYS_GPS[b_name]
 
 
 def line_crossed(p_prev: GPSPos, p_curr: GPSPos,
@@ -226,18 +236,23 @@ def local_to_gps(east: float, north: float) -> GPSPos:
 def buoy_local(buoy_name: str) -> LocalPos:
     """Position locale (east, north) d'une bouée par son nom.
 
+    Pour les portes à 2 caractères (ex: 'AB', '12', '34'), retourne le
+    milieu de la porte.
+
     ⚠️ Outil de visualisation seulement (replay_log, simulator plot).
     """
-    if buoy_name == "AB":
-        a = buoy_local("A")
-        b = buoy_local("B")
-        return ((a[0] + b[0]) / 2.0, (a[1] + b[1]) / 2.0)
+    if len(buoy_name) == 2:
+        a_name, b_name = buoy_name[0], buoy_name[1]
+        if a_name in config.BUOYS_GPS and b_name in config.BUOYS_GPS:
+            a = buoy_local(a_name)
+            b = buoy_local(b_name)
+            return ((a[0] + b[0]) / 2.0, (a[1] + b[1]) / 2.0)
     return gps_to_local(*config.BUOYS_GPS[buoy_name])
 
 
-def gate_endpoints() -> Tuple[LocalPos, LocalPos]:
-    """Coordonnées locales (A, B) de la porte départ/arrivée.
+def gate_endpoints(gate_name: str = "AB") -> Tuple[LocalPos, LocalPos]:
+    """Coordonnées locales des deux bouées d'une porte (ex: 'AB', '12', '34').
 
     ⚠️ Outil de visualisation seulement.
     """
-    return buoy_local("A"), buoy_local("B")
+    return buoy_local(gate_name[0]), buoy_local(gate_name[1])

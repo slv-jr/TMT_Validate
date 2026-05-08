@@ -9,7 +9,7 @@ Messages :
     W|<dir_deg>|<spd_ms×10>|<unix_ts>            — vent (toutes les 60s)
     P|<id>|<lat×1e5>|<lon×1e5>|<hdg>|<spd_kn×10>  — position (60s par bateau)
 
-Identifiants UTT : U1B1, U1B2, U1B3.
+Identifiants UTT : U1B1, U1B2 (régate à 2 drones — cf. config.TEAM_BOATS).
 """
 
 import logging

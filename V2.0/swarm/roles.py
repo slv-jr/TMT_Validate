@@ -1,22 +1,23 @@
 """
-Attribution dynamique des rôles dans l'essaim UTT.
+Attribution dynamique des rôles dans l'essaim UTT — régate à 2 drones.
 
-Trois rôles (cf. dossier technique §VII.2) :
-    - SCOUT     : éclaireur, en tête, mesure le vent et confirme les bouées
-    - OPTIMIZER : optimise le VMG, suit le scout
-    - SAFETY    : arrière-garde, surveillance, redondance
+Deux rôles (cf. config._DRONE_PROFILES) :
+    - SCOUT     : éclaireur, départ T+0, mesure le vent au largue, agressif
+    - OPTIMIZER : optimise le VMG, départ T+30s, profite des data du Scout
 
 Réévalués toutes les ROLE_REEVAL_PERIOD_S secondes par une matrice de score.
 Critères :
     - Position dans le parcours (le drone le plus avancé devient Scout)
-    - Batterie restante (Safety prend le drone à plus faible énergie)
+    - Batterie restante (privilégie les drones bien chargés)
     - Vitesse instantanée (le plus rapide tend à devenir Scout)
+
+NB : si seul 1 drone est connu, on conserve le rôle par défaut du profil.
 """
 
 import logging
 import time
 from dataclasses import dataclass
-from typing import Dict, Optional, Tuple
+from typing import Dict, Tuple
 
 import config
 from navigation import geo_utils
@@ -41,12 +42,10 @@ class RoleManager:
     def __init__(self):
         self.my_role: str = config.DEFAULT_ROLE
         self._last_eval_t: float = 0.0
-        # Notre état interne (rempli par la boucle principale)
         self._self_state: DroneState = DroneState(
             boat_id=config.DRONE_ID,
             role=config.DEFAULT_ROLE,
         )
-        # États perçus des coéquipiers (depuis LoRa)
         self._teammate_states: Dict[str, DroneState] = {}
 
     # ─────────────────────────────────────────────
@@ -63,11 +62,7 @@ class RoleManager:
     def update_teammate(self, boat_id: str, pos_gps: Tuple[float, float],
                         speed_ms: float, has_fix: bool,
                         leg_index_estimate: int = -1):
-        """À appeler quand on reçoit une PositionMessage d'un coéquipier.
-
-        leg_index_estimate : si on connaît la progression du voisin par un
-        message d'extension (non standard), sinon on l'estime ici.
-        """
+        """À appeler quand on reçoit une PositionMessage d'un coéquipier."""
         ts = self._teammate_states.get(boat_id)
         if ts is None:
             ts = DroneState(
@@ -85,13 +80,10 @@ class RoleManager:
 
     @staticmethod
     def _estimate_progress_from_position(pos_gps: Tuple[float, float]) -> int:
-        """Heuristique : trouve la prochaine bouée non franchie en se
-        basant sur la position GPS du voisin et la séquence du parcours.
-        Sans info exacte, on retourne l'étape la plus proche.
-        """
+        """Heuristique : trouve l'étape la plus proche dans le parcours actif."""
         best_idx = 0
         best_d = 1e9
-        for i, leg in enumerate(config.COURSE_3_LEGS):
+        for i, leg in enumerate(config.COURSE_LEGS):
             try:
                 bp = geo_utils.buoy_gps(leg["buoy"])
             except KeyError:
@@ -109,37 +101,40 @@ class RoleManager:
         """Plus le score est élevé, plus le drone est adapté à ce rôle."""
         score = 0.0
         if role == config.ROLE_SCOUT:
-            score += drone.leg_index * 100.0          # plus avancé = mieux
-            score += drone.speed_ms * 5.0             # plus rapide = mieux
+            # Le Scout est en tête : récompense la position avancée et la vitesse
+            score += drone.leg_index * 100.0
+            score += drone.speed_ms * 5.0
             score += drone.battery_pct * 0.3
         elif role == config.ROLE_OPTIMIZER:
+            # L'Optimizer maximise le VMG : récompense la batterie + une vitesse
+            # stable (pas trop élevée = signe d'optimisation), pénalise être en tête
             score += drone.battery_pct * 1.0
-            score += min(drone.speed_ms, 3.0) * 10.0  # vitesse stable, pas excessive
+            score += min(drone.speed_ms, 3.0) * 10.0
             # Préfère un drone "au milieu" : pas en tête ni dernier
-            score += -abs(drone.leg_index - len(config.COURSE_3_LEGS) / 2.0) * 5.0
-        elif role == config.ROLE_SAFETY:
-            score += (100.0 - drone.battery_pct) * 0.5  # on lui donne le moins chargé
-            score += -drone.leg_index * 20.0             # plutôt arrière du peloton
+            score += -abs(drone.leg_index - len(config.COURSE_LEGS) / 2.0) * 5.0
         return score
 
     def reevaluate(self) -> str:
-        """Lance une réévaluation des rôles. Retourne le nouveau rôle local."""
+        """Lance une réévaluation des rôles. Retourne le nouveau rôle local.
+
+        Avec 2 drones : on attribue Scout au plus avancé/rapide, Optimizer à
+        l'autre. Si on n'a pas encore reçu de message du coéquipier (départ
+        non encore commencé), on garde le rôle par défaut du profil.
+        """
         now = time.monotonic()
         if now - self._last_eval_t < config.ROLE_REEVAL_PERIOD_S:
             return self.my_role
         self._last_eval_t = now
 
-        # Liste de tous les drones connus de l'équipe
         all_drones: Dict[str, DroneState] = dict(self._teammate_states)
         all_drones[config.DRONE_ID] = self._self_state
 
         if len(all_drones) < 2:
-            # Pas assez d'info — on garde le rôle par défaut
             return self.my_role
 
-        # Hungarian-like simple : on attribue les rôles dans l'ordre Scout,
-        # Optimizer, Safety en choisissant à chaque fois le meilleur drone non encore assigné.
-        roles_order = [config.ROLE_SCOUT, config.ROLE_OPTIMIZER, config.ROLE_SAFETY]
+        # Attribution Hungarian-like : on choisit Scout (le meilleur à ce poste),
+        # le drone restant devient Optimizer.
+        roles_order = [config.ROLE_SCOUT, config.ROLE_OPTIMIZER]
         assignments: Dict[str, str] = {}
         remaining_drones = list(all_drones.keys())
         for role in roles_order:
@@ -159,28 +154,46 @@ class RoleManager:
         return new_role
 
     # ─────────────────────────────────────────────
-    # Stratégie modulée par rôle
+    # Stratégie modulée par rôle (+ tactique)
     # ─────────────────────────────────────────────
-    def role_modifies_strategy(self) -> dict:
+    def role_modifies_strategy(self,
+                               tactical=None) -> dict:
         """Retourne des paramètres de modulation pour la stratégie.
 
-        Exemple :
-            SCOUT     : accepte plus de risque, favorise vitesse brute
-            OPTIMIZER : maximise VMG strict
-            SAFETY    : marge accrue sur les bouées, virages anticipés
+        SCOUT (U1B1) :
+            - Accepte plus de risque, favorise vitesse brute
+            - Tack plus agressif (plus rapide à virer)
+            - Marge bouée minimale (frôle pour gagner du temps)
+
+        OPTIMIZER (U1B2) :
+            - Maximise VMG strict
+            - Tack standard
+            - Marge bouée standard
+            - Quand il a reçu ≥1 broadcast du Scout, ajuste la polaire
+              (cette logique est dans wind_estimator.py)
+
+        Si `tactical` (TacticalSnapshot) est fourni, on bascule en mode
+        "défensif" quand la cible est encombrée par ≥2 ennemis : marge
+        bouée augmentée, tack moins agressif. C'est appelé depuis main.py.
         """
         if self.my_role == config.ROLE_SCOUT:
-            return {
+            base = {
                 "buoy_clearance_factor": 1.0,
                 "tack_eagerness": 1.2,
+                "use_scout_wind": False,
             }
-        elif self.my_role == config.ROLE_SAFETY:
-            return {
-                "buoy_clearance_factor": 1.5,    # passer plus large
-                "tack_eagerness": 0.8,           # moins de tacks risqués
+        else:
+            # OPTIMIZER (défaut)
+            base = {
+                "buoy_clearance_factor": 1.0,
+                "tack_eagerness": 1.0,
+                "use_scout_wind": True,
             }
-        # OPTIMIZER (défaut)
-        return {
-            "buoy_clearance_factor": 1.0,
-            "tack_eagerness": 1.0,
-        }
+
+        if tactical is not None and getattr(tactical, "blocked_target", False):
+            base["buoy_clearance_factor"] *= 1.5      # +50 % de marge
+            base["tack_eagerness"] *= 0.8             # tack moins fréquent
+            base["defensive"] = True
+        else:
+            base["defensive"] = False
+        return base

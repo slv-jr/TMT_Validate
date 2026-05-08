@@ -28,6 +28,8 @@ class FlightLogger:
         "timestamp_unix",
         "elapsed_s",
         "drone_id",
+        "mode",          # ESSAI ou REGATE (cf. config.MODE)
+        "course_n",      # 1, 2 ou 3 (cf. config.COURSE_NUMBER)
         "nav_state",
         "control_mode",
         "role",
@@ -57,6 +59,13 @@ class FlightLogger:
         "penalty_mode",
         "penalty_progress",
         "neighbors_count",
+        "enemies_total",
+        "enemies_ahead",
+        "enemies_close",
+        "blocked_target",
+        "lora_tx_pos",
+        "lora_rx_pos",
+        "lora_rx_wind",
         "degraded_modes",
     ]
 
@@ -103,6 +112,8 @@ class FlightLogger:
             row_filled.setdefault("elapsed_s",
                                   time.monotonic() - self._start_t)
             row_filled.setdefault("drone_id", config.DRONE_ID)
+            row_filled.setdefault("mode", config.MODE)
+            row_filled.setdefault("course_n", config.COURSE_NUMBER)
             self._writer.writerow(row_filled)
             self._tick_count += 1
             # Flush périodique

@@ -141,7 +141,7 @@ def save_to_file(result: dict, path: str):
 
 if __name__ == "__main__":
     parser = argparse.ArgumentParser(description="Relevé GPS d'une bouée")
-    parser.add_argument("buoy", help="Nom de la bouée (A, B, C, D, E, F, G, Z1, Z2)")
+    parser.add_argument("buoy", help="Nom de la bouée (1, 2, 3, 4, P1, P2, A, B, C, D, E, Z1, Z2)")
     parser.add_argument("--duration", type=float, default=30.0)
     parser.add_argument("--no-rtk", action="store_true",
                         help="Accepter un fix non-RTK (par défaut RTK requis)")

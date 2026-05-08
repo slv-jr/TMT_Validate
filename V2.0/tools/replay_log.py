@@ -1,8 +1,9 @@
 """
 Visualisation post-course d'un fichier de log CSV.
 
-Trace la trajectoire effective sur le parcours N°3, avec les bouées et la
-route théorique. Utile pour debugger et calibrer la polaire de vitesse.
+Trace la trajectoire effective sur le parcours actif (1 banane ou 2 côtier
+court), avec les bouées et la route théorique. Utile pour debugger et
+calibrer la polaire de vitesse.
 
 Usage :
     python3 -m tools.replay_log logs/flight_U1B1_20260509_140532.csv
@@ -68,8 +69,10 @@ def main():
     colors = {
         "A": "gold", "B": "gold",
         "C": "yellow", "D": "yellow", "E": "yellow",
-        "F": "orange", "G": "orange",
         "Z1": "red", "Z2": "red",
+        # Parcours banane
+        "1": "gold", "2": "gold", "3": "yellow", "4": "yellow",
+        "P1": "red", "P2": "red",
     }
     for name, pos in config.BUOYS_LOCAL.items():
         color = colors.get(name, "white")

@@ -2,18 +2,16 @@
 TDMA scheduling pour les transmissions LoRa internes UTT.
 
 Note : Le protocole BattleBoats officiel impose 60s entre 2 P|... (cf.
-BATTLEBOATS_LORA_PROTOCOL_v5.pdf §3.3). Ce TDMA fin (slots de 500ms) est
+BATTLEBOATS_LORA_PROTOCOL_v5.pdf §3.3). Ce TDMA fin (slots de 750ms) est
 une couche INTERNE à l'équipe UTT pour éviter les collisions d'air entre
-nos 3 drones quand on échange des informations supplémentaires (par
-exemple à l'avenir des messages de coordination étendus).
+nos 2 drones quand on échange des informations supplémentaires.
 
-Pour le protocole officiel, on respecte simplement la cadence de 60s en
-décalant l'envoi de chaque drone selon son numéro :
-    - U1B1 (D1) émet à T+0s, T+60s, T+120s, …
-    - U1B2 (D2) émet à T+20s, T+80s, T+140s, …
-    - U1B3 (D3) émet à T+40s, T+100s, T+160s, …
-Cela évite que les 3 drones de l'équipe émettent en même temps et
-saturent le canal LoRa avec des positions UTT.
+Régate à 2 drones : on respecte simplement la cadence de 60s en décalant
+l'envoi de chaque drone d'une demi-période :
+    - U1B1 (D1) émet à T+0s,  T+60s, T+120s, …
+    - U1B2 (D2) émet à T+30s, T+90s, T+150s, …
+Cela évite que les 2 drones UTT émettent en même temps et saturent le
+canal LoRa avec des positions UTT.
 """
 
 import time
@@ -28,9 +26,10 @@ def my_offset_s_within_minute() -> float:
     """Retourne le décalage (en secondes) DANS UNE MINUTE auquel notre
     drone émet son P|... officiel.
 
-    On répartit les 3 drones sur 0/20/40s pour étaler les broadcasts.
+    Régate à 2 drones : on répartit sur 0/30s pour étaler les broadcasts.
+    Drone 1 (Scout) → 0 s, Drone 2 (Optimizer) → 30 s.
     """
-    return (config.DRONE_NUM - 1) * 20.0
+    return (config.DRONE_NUM - 1) * 30.0
 
 
 class TDMAScheduler:
